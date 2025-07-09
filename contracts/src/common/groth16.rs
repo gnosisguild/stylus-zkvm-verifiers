@@ -1,7 +1,3 @@
-/*!
-Generic Groth16 proof verification for different ZKP systems.
-*/
-
 use alloc::vec::Vec;
 use stylus_sdk::{
     alloy_primitives::{uint, Address, U256},
@@ -25,7 +21,6 @@ pub struct G2Point {
     pub y: [U256; 2],
 }
 
-/// Groth16 verification key
 pub struct VerificationKey {
     pub alpha1: G1Point,
     pub beta2: G2Point,
@@ -34,7 +29,6 @@ pub struct VerificationKey {
     pub ic: &'static [G1Point],
 }
 
-/// Generic Groth16 verifier that works with any verification key
 pub struct Groth16Verifier;
 
 impl Groth16Verifier {
@@ -42,7 +36,6 @@ impl Groth16Verifier {
         Self
     }
 
-    /// Verify a Groth16 proof with the given verification key
     pub fn verify_proof_with_key(
         &self,
         vk: &VerificationKey,
@@ -51,12 +44,10 @@ impl Groth16Verifier {
         c: [U256; 2],
         public_signals: &[U256],
     ) -> bool {
-        // Ensure we have the right number of public signals
         if public_signals.len() + 1 != vk.ic.len() {
             return false;
         }
 
-        // Check that all public signals are within the field
         if public_signals.iter().any(|&x| x >= R) {
             return false;
         }
@@ -155,14 +146,21 @@ impl Groth16Verifier {
         d1: &G1Point,
         d2: &G2Point,
     ) -> Result<bool, Vec<u8>> {
-        let calldata = [
-            a1.x, a1.y, a2.x[1], a2.x[0], a2.y[1], a2.y[0], b1.x, b1.y, b2.x[1], b2.x[0],
-            b2.y[1], b2.y[0], c1.x, c1.y, c2.x[1], c2.x[0], c2.y[1], c2.y[0], d1.x, d1.y,
-            d2.x[1], d2.x[0], d2.y[1], d2.y[0],
-        ]
-        .into_iter()
-        .flat_map(to_bytes)
-        .collect::<Vec<u8>>();
+        let mut calldata = Vec::<u8>::with_capacity(24 * 32);
+
+        let mut push = |g1: &G1Point, g2: &G2Point| {
+            calldata.extend_from_slice(&to_bytes(g1.x));
+            calldata.extend_from_slice(&to_bytes(g1.y));
+            calldata.extend_from_slice(&to_bytes(g2.x[0]));
+            calldata.extend_from_slice(&to_bytes(g2.x[1]));
+            calldata.extend_from_slice(&to_bytes(g2.y[0]));
+            calldata.extend_from_slice(&to_bytes(g2.y[1]));
+        };
+
+        push(a1, a2);
+        push(b1, b2);
+        push(c1, c2);
+        push(d1, d2);
 
         unsafe {
             RawCall::new_static().gas(u64::MAX).call(
@@ -170,8 +168,8 @@ impl Groth16Verifier {
                 &calldata,
             )
         }
-        .map(|ret| !ret[31] != 0)
-        .map_err(|_| b"pairing_check failed".to_vec())
+        .map(|ret| !U256::from_be_slice(&ret[0..32]).is_zero())
+        .map_err(|_| b"pairing failed".to_vec())
     }
 }
 
@@ -183,4 +181,4 @@ impl Default for Groth16Verifier {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

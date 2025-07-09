@@ -8,7 +8,6 @@ use stylus_sdk::{
 use crate::common::VerificationKey;
 use crate::risc0::config::tags;
 
-/// RISC Zero Groth16 verification key
 pub mod vk {
     use super::*;
     use crate::common::{G1Point, G2Point};
@@ -90,11 +89,9 @@ pub mod vk {
     }
 }
 
-/// RISC Zero digest computation utilities
 pub mod digest_utils {
     use super::*;
 
-    /// Split a digest into two 16-byte halves for use as public signals
     pub fn split_digest(d: B256) -> ([u8; 16], [u8; 16]) {
         let mut rev = [0u8; 32];
         rev.iter_mut()
@@ -108,7 +105,6 @@ pub mod digest_utils {
         (low, high)
     }
 
-    /// Create a tagged struct digest
     pub fn tagged_struct(tag_digest: B256, down: Vec<B256>) -> B256 {
         let mut buf = Vec::with_capacity(32 + 32 * down.len() + 2);
 
@@ -116,18 +112,15 @@ pub mod digest_utils {
         for d in &down {
             buf.extend_from_slice(d.as_slice())
         }
-        // Use big-endian and shift left by 8 bits like Solidity: uint16(len) << 8
         buf.extend_from_slice(&((down.len() as u16) << 8).to_be_bytes());
 
         B256::from_slice(&Sha256::digest(&buf))
     }
 
-    /// Create a tagged list cons operation
     pub fn tagged_list_cons(tag_digest: B256, head: B256, tail: B256) -> B256 {
         tagged_struct(tag_digest, vec![head, tail])
     }
 
-    /// Create a tagged list digest
     pub fn tagged_list(tag_digest: B256, list: Vec<B256>) -> B256 {
         let mut curr = B256::ZERO;
         for element in list.into_iter().rev() {
@@ -136,7 +129,6 @@ pub mod digest_utils {
         curr
     }
 
-    /// Compute the RISC Zero verifier key digest
     pub fn compute_verifier_key_digest() -> B256 {
         let mut ic_digests = Vec::with_capacity(6);
         for pt in &vk::IC {

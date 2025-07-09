@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
             if result._0 {
                 println!("🎉 PROOF VERIFICATION SUCCESSFUL!");
                 println!("   The RISC Zero proof is valid and verified on-chain!");
-                println!("\n✨ Verification complete!");
+                println!("\n🏁 Verification complete!");
             } else {
                 println!("❌ Proof verification failed");
                 println!("   The proof did not pass verification");

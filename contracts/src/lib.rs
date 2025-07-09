@@ -23,7 +23,7 @@ stylus-zkp-verifiers = "0.1.0"
 Then import the verifier you need:
 
 ```rust
-use stylus_zkp_verifiers::risc0::{RiscZeroVerifier, IRiscZeroVerifier};
+use stylus_zkvm_verifiers::risc0::{RiscZeroVerifier, IRiscZeroVerifier};
 use stylus_sdk::prelude::*;
 
 #[entrypoint]

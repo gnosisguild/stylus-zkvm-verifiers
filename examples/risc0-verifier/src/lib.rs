@@ -8,7 +8,7 @@ use stylus_sdk::{
     alloy_primitives::{FixedBytes, B256, B128},
     prelude::*,
 };
-use stylus_zkp_verifiers::risc0::{RiscZeroVerifier, IRiscZeroVerifier};
+use stylus_zkvm_verifiers::risc0::{RiscZeroVerifier, IRiscZeroVerifier};
 
 #[entrypoint]
 #[storage]

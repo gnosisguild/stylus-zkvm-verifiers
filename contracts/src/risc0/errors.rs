@@ -9,12 +9,9 @@ sol! {
     error SelectorMismatch(bytes4 received, bytes4 expected);
 }
 
-/// RISC Zero-specific error types
 #[derive(Debug)]
 pub enum RiscZeroError {
-    /// Common verification errors
     Common(VerificationError),
-    /// RISC Zero selector mismatch
     SelectorMismatch {
         received: FixedBytes<4>,
         expected: FixedBytes<4>,
@@ -22,7 +19,6 @@ pub enum RiscZeroError {
 }
 
 impl RiscZeroError {
-    /// Convert error to ABI-encoded bytes
     pub fn abi_encode(&self) -> alloc::vec::Vec<u8> {
         match self {
             RiscZeroError::Common(e) => e.abi_encode(),

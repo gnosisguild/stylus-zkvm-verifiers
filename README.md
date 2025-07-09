@@ -99,7 +99,7 @@ cargo run --example interact
 
 ```toml
 [dependencies]
-stylus-zkp-verifiers = { path = "../path/to/contracts", features = ["risc0"] }
+stylus-zkvm-verifiers = { path = "../path/to/contracts", features = ["risc0"] }
 ```
 
 ### Feature Flags
