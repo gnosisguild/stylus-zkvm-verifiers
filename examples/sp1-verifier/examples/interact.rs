@@ -1,6 +1,6 @@
 use alloy::{
     network::EthereumWallet,
-    primitives::{hex, B256, FixedBytes},
+    primitives::{hex, B256},
     providers::ProviderBuilder,
     signers::local::PrivateKeySigner,
     sol,
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     println!();
 
     match verifier
-        .verifyProof(test_data.vkey, test_data.public_values, test_data.proof)
+        .verifyProof(test_data.vkey, test_data.public_values.into(), test_data.proof.into())
         .call()
         .await
     {
@@ -94,7 +94,7 @@ struct TestFixture {
 
 fn load_test_fixture() -> TestFixture {
     TestFixture {
-        vkey: B256::from_str("0x00b51cef3572d1a49ae7f4a332221cab31cdb72b131dbf28fb6ab26e15458fe2").unwrap(),
+        vkey: B256::from_slice(&hex::decode("00b51cef3572d1a49ae7f4a332221cab31cdb72b131dbf28fb6ab26e15458fe2").unwrap()),
         public_values: hex::decode("00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000001a6d0000000000000000000000000000000000000000000000000000000000002ac2").unwrap(),
         proof: hex::decode("11b6a09d07727e8889e440a3a4fe6b3cc7e438d232daa177c762d3267ada247e165b06ca1beaf42fbaaa7676caf3dd978af6c1b7b64968f67f41e3d356790a09337566d81122aa6904fd105ff2a499c1f3264a3f55e740cda6521be1877225f4073f7a4a22fe10987f12d67a145738de4e301bb8e37347556bead5bb003ce32653ffae5a281be092e26c9d16eb569b3592eb766b0197fe05d359952a05958b2596239f061333369ab1d6576f80e965d0e3d8f1d3a74722e794e72199c3dee91bff8f3a5e087ac3fac78f5372befa133b94764b43c4c88ee4f3fc0495e52c74ad5a6d2c18008e6740d0aad32976971c95db159fb37d4f8428d7c5abe658a58d516acd664c").unwrap(),
     }
