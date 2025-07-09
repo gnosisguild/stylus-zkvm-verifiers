@@ -7,7 +7,7 @@ A comprehensive library for zero-knowledge proof verification on [Arbitrum Stylu
 | System | Status | Proof System | Features | Version |
 |--------|--------|--------------|----------|---------|
 | **RISC Zero** | ✅ | Groth16 | Selectors, control roots, receipt verification | v2.1 |
-| **SP1** | 🚧 Mock/TODO | PLONK | Simple verification key setup | 0.0.0 |
+| **SP1** | 🚧 In Progress | Groth16/PLONK | Verification key setup | v3.0.0 |
 
 ## 📁 Project Structure
 

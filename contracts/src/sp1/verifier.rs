@@ -1,39 +1,107 @@
-/*!
-SP1 Verifier Implementation
+use alloc::{vec, vec::Vec, string::String};
+use stylus_sdk::{
+    alloy_primitives::{FixedBytes, B256},
+    alloy_sol_types::SolType,
+    prelude::*,
+};
 
-TODO: Implement SP1 verification logic
-*/
+use crate::common::Groth16Verifier;
+use crate::sp1::{
+    config,
+    crypto::vk,
+    errors::Sp1Error,
+    types::{Sp1Proof, Sp1PublicInputs},
+};
 
-use alloy_primitives::{B256, U256};
-use stylus_sdk::{call::MethodError, prelude::*};
+pub trait ISp1Verifier {
+    type Error;
 
-use crate::sp1::{config::Sp1Config, errors::Sp1Error, types::Sp1Receipt};
+    fn verify_proof(
+        &self,
+        program_vkey: B256,
+        public_values: Vec<u8>,
+        proof_bytes: Vec<u8>,
+    ) -> Result<(), Self::Error>;
 
-#[derive(SolidityError)]
-pub enum Sp1VerifierError {
-    NotImplemented(Sp1Error),
+    fn verifier_hash(&self) -> B256;
+
+    fn version(&self) -> String;
 }
 
-/// SP1 Verifier contract implementation
-/// 
-/// TODO: Replace this mock with actual SP1 verification
+sol_storage! {
+    pub struct Sp1Verifier {}
+}
+
 #[public]
-impl Sp1Config {
-    /// Verify an SP1 proof
-    /// 
-    /// TODO: Implement SP1 verification
-    pub fn verify_proof(
+impl ISp1Verifier for Sp1Verifier {
+    type Error = Vec<u8>;
+
+    fn verify_proof(
         &self,
-        _proof_data: Vec<u8>,
-        _program_id: B256,
-        _public_input_hash: B256,
-    ) -> Result<bool, Sp1VerifierError> {
-        // TODO: Replace with actual SP1 verification logic
-        Ok(false)
+        program_vkey: B256,
+        public_values: Vec<u8>,
+        proof_bytes: Vec<u8>,
+    ) -> Result<(), Self::Error> {
+        self.verify_proof_internal(program_vkey, public_values, proof_bytes)
     }
 
-    /// Get the verification key hash
-    pub fn get_verification_key_hash(&self) -> B256 {
-        self.verification_key_hash
+    fn verifier_hash(&self) -> B256 {
+        config::VERIFIER_HASH
+    }
+
+    fn version(&self) -> String {
+        String::from(config::VERSION)
+    }
+}
+
+impl Sp1Verifier {
+    fn verify_proof_internal(
+        &self,
+        program_vkey: B256,
+        public_values: Vec<u8>,
+        proof_bytes: Vec<u8>,
+    ) -> Result<(), Vec<u8>> {
+        if proof_bytes.len() < 4 {
+            return Err(Sp1Error::INVALID_PROOF_DATA.abi_encode());
+        }
+
+        let received_selector = FixedBytes::<4>::from_slice(&proof_bytes[..4]);
+        let expected_selector = config::get_verifier_selector();
+        
+        if received_selector != expected_selector {
+            return Err(Sp1Error::WrongVerifierSelector {
+                received: received_selector,
+                expected: expected_selector,
+            }.abi_encode());
+        }
+
+        let proof_data = &proof_bytes[4..];
+        let sp1_proof = match <Sp1Proof as SolType>::abi_decode(proof_data, true) {
+            Ok(proof) => proof,
+            Err(_) => return Err(Sp1Error::INVALID_PROOF_DATA.abi_encode()),
+        };
+
+        let public_inputs = Sp1PublicInputs::new(program_vkey, &public_values);
+        let public_signals = public_inputs.to_array();
+
+        let proof_array = sp1_proof.proof;
+        let a = [proof_array[0], proof_array[1]];
+        let b = [[proof_array[2], proof_array[3]], [proof_array[4], proof_array[5]]];
+        let c = [proof_array[6], proof_array[7]];
+
+        let verification_key = vk::get_verification_key();
+        let verified = Groth16Verifier::new().verify_proof_with_key(
+            &verification_key,
+            a,
+            b,
+            c,
+            &public_signals,
+        );
+
+        if !verified {
+            return Err(Sp1Error::VERIFICATION_FAILED.abi_encode());
+        }
+
+        Ok(())
     }
 } 

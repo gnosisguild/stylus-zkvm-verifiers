@@ -1,67 +1,47 @@
-/*!
-SP1 Verifier Example Contract
-
-TODO: Complete SP1 verifier implementation
-*/
-
-#![cfg_attr(not(feature = "export-abi"), no_main)]
+#![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
+#![cfg_attr(not(any(test, feature = "export-abi")), no_std)]
 extern crate alloc;
 
-use stylus_sdk::{alloy_primitives::B256, prelude::*, ArbResult};
-use stylus_zkp_verifiers::sp1::Sp1Config;
+use alloc::{vec, vec::Vec, string::String};
+use stylus_sdk::{
+    alloy_primitives::B256,
+    prelude::*,
+};
+use stylus_zkvm_verifiers::sp1::{Sp1Verifier, ISp1Verifier};
 
-/// SP1 Verifier Contract
-/// 
-/// TODO: Replace mock with full SP1 implementation
-#[derive(SolidityError)]
-#[sol(name = "SP1Verifier")]
-pub struct Sp1Verifier {
-    config: Sp1Config,
-}
-
-impl Default for Sp1Verifier {
-    fn default() -> Self {
-        Self {
-            config: Sp1Config::default(),
-        }
-    }
+#[entrypoint]
+#[storage]
+struct Sp1VerifierExample {
+    verifier: Sp1Verifier,
 }
 
 #[public]
-impl Sp1Verifier {
-    /// Initialize the SP1 verifier
-    /// 
-    /// TODO: Add SP1 verification key validation
-    pub fn initialize(&mut self, verification_key_hash: B256) -> ArbResult {
-        self.config.initialize(verification_key_hash)
-    }
+#[implements(ISp1Verifier<Error = Vec<u8>>)]
+impl Sp1VerifierExample {}
 
-    /// Verify an SP1 proof (MOCK IMPLEMENTATION)
-    /// 
-    /// TODO: Replace with actual SP1 proof verification
-    pub fn verify_proof(
+#[public]
+impl ISp1Verifier for Sp1VerifierExample {
+    type Error = Vec<u8>;
+
+    fn verify_proof(
         &self,
-        _proof_data: Vec<u8>,
-        _program_id: B256,
-        _public_input_hash: B256,
-    ) -> bool {
-        // TODO: Implement SP1 verification
-        false
+        program_vkey: B256,
+        public_values: Vec<u8>,
+        proof_bytes: Vec<u8>,
+    ) -> Result<(), Self::Error> {
+        self.verifier.verify_proof(program_vkey, public_values, proof_bytes)
     }
 
-    /// Check if verifier is initialized
-    pub fn is_initialized(&self) -> bool {
-        self.config.is_initialized()
+    fn verifier_hash(&self) -> B256 {
+        self.verifier.verifier_hash()
     }
 
-    /// Get verification key hash
-    pub fn get_verification_key_hash(&self) -> B256 {
-        self.config.get_verification_key_hash()
+    fn version(&self) -> String {
+        self.verifier.version()
     }
 }
 
-/// Program entrypoint for ABI export
 #[cfg(feature = "export-abi")]
-fn main() {
-    Sp1Verifier::print_from_args();
+pub fn print_from_args() {
+    stylus_sdk::abi::export_abi::<Sp1VerifierExample>();
 } 

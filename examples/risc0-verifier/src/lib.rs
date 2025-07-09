@@ -16,17 +16,14 @@ struct RiscZeroVerifierExample {
     verifier: RiscZeroVerifier,
 }
 
-/// Example implementation of a RISC Zero verifier contract
 #[public]
 #[implements(IRiscZeroVerifier<Error = Vec<u8>>)]
 impl RiscZeroVerifierExample {}
 
-/// Trait implementation for the RISC Zero verifier
 #[public]
 impl IRiscZeroVerifier for RiscZeroVerifierExample {
     type Error = Vec<u8>;
 
-    /// Initialize the verifier with RISC Zero parameters
     fn initialize(
         &mut self,
         control_root: B256,
@@ -35,7 +32,6 @@ impl IRiscZeroVerifier for RiscZeroVerifierExample {
         self.verifier.initialize(control_root, bn254_control_id)
     }
 
-    /// Verify a RISC Zero proof
     fn verify(
         &self,
         seal: Vec<u8>,
@@ -45,7 +41,6 @@ impl IRiscZeroVerifier for RiscZeroVerifierExample {
         self.verifier.verify(seal, image_id, journal_digest)
     }
 
-    /// Verify proof integrity directly
     fn verify_integrity(
         &self,
         receipt_seal: Vec<u8>,

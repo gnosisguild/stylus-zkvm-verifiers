@@ -1,40 +1,39 @@
-/*!
-SP1 Type Definitions
+use sha2::{Digest, Sha256};
+use stylus_sdk::{
+    alloy_primitives::{B256, U256},
+    alloy_sol_types::sol,
+};
 
-TODO: Implement SP1-specific types and data structures
-*/
+use crate::sp1::config;
 
-use alloy_primitives::B256;
-
-/// SP1 Proof structure
-/// 
-/// TODO: Define SP1 proof format
-pub struct Sp1Proof {
-    // TODO: Add proof fields
+sol! {
+    struct Sp1Proof {
+        uint256[8] proof;
+    }
 }
 
-/// SP1 Receipt structure  
-/// 
-/// TODO: Define SP1 receipt format
-pub struct Sp1Receipt {
-    // TODO: Add receipt fields
-}
-
-/// SP1 Program identifier
-/// 
-/// TODO: Define program identifier
-pub type Sp1ProgramId = B256;
-
-/// SP1 Public inputs
-/// 
-/// TODO: Define public input structure
+#[derive(Clone, Debug)]
 pub struct Sp1PublicInputs {
-    // TODO: Add public input fields
+    pub program_vkey: U256,
+    pub public_values_digest: U256,
 }
 
-/// SP1 Verification result
-/// 
-/// TODO: Define verification result
-pub struct Sp1VerificationResult {
-    // TODO: Add result fields
+impl Sp1PublicInputs {
+    pub fn new(program_vkey: B256, public_values: &[u8]) -> Self {
+        Self {
+            program_vkey: U256::from_be_bytes(program_vkey.0),
+            public_values_digest: hash_public_values(public_values),
+        }
+    }
+
+    /// Convert to array format for verification
+    pub fn to_array(&self) -> [U256; 2] {
+        [self.program_vkey, self.public_values_digest]
+    }
+}
+
+pub fn hash_public_values(public_values: &[u8]) -> U256 {
+    let hash = Sha256::digest(public_values);
+    let hash_u256 = U256::from_be_bytes(hash.into());
+    hash_u256 & config::FIELD_MASK
 } 

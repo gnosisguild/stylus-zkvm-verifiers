@@ -1,60 +1,28 @@
-/*!
-SP1 Configuration and State Management
+use stylus_sdk::alloy_primitives::{FixedBytes, B256, U256};
 
-TODO: Implement SP1 verifier configuration
-*/
+pub const VERSION: &str = "v3.0.0";
+pub const VERIFIER_HASH: B256 = B256::new([
+    0x09, 0x06, 0x90, 0x90, 0x2a, 0x12, 0xd1, 0xd0,
+    0x2c, 0x07, 0xa1, 0xad, 0x25, 0xaa, 0x76, 0xbd,
+    0xed, 0x5f, 0x64, 0x99, 0xe1, 0x2a, 0x11, 0xba,
+    0x12, 0x76, 0x69, 0x50, 0x1b, 0x55, 0x39, 0x98,
+]);
 
-use alloy_primitives::B256;
-use stylus_sdk::prelude::*;
 
-/// SP1 Verifier Configuration
-/// 
-/// TODO: Implement SP1 configuration management
-#[derive(SolidityError)]
-#[sol(name = "Sp1Config")]
-pub struct Sp1Config {
-    /// Verification key hash for SP1 verifier
-    /// TODO: Implement verification key handling
-    pub verification_key_hash: B256,
-    
-    /// Whether the verifier has been initialized
-    pub initialized: bool,
-}
+pub const R_MODULUS: U256 = U256::from_limbs([
+    0x43e1f593f0000001,
+    0x2833e84879b97091,
+    0xb85045b68181585d,
+    0x30644e72e131a029,
+]);
 
-impl Default for Sp1Config {
-    fn default() -> Self {
-        Self {
-            verification_key_hash: B256::ZERO,
-            initialized: false,
-        }
-    }
-}
+pub const FIELD_MASK: U256 = U256::from_limbs([
+    0xffffffffffffffff,
+    0xffffffffffffffff,
+    0xffffffffffffffff,
+    0x1fffffffffffffff,
+]);
 
-#[public]
-impl Sp1Config {
-    /// Initialize the SP1 verifier with verification key hash
-    /// 
-    /// TODO: Add verification key validation
-    pub fn initialize(&mut self, verification_key_hash: B256) -> Result<(), Vec<u8>> {
-        if self.initialized {
-            return Err(b"Already initialized".to_vec());
-        }
-
-        // TODO: Add verification key validation
-
-        self.verification_key_hash = verification_key_hash;
-        self.initialized = true;
-
-        Ok(())
-    }
-
-    /// Check if verifier is initialized
-    pub fn is_initialized(&self) -> bool {
-        self.initialized
-    }
-
-    /// Get verification key hash
-    pub fn get_verification_key_hash(&self) -> B256 {
-        self.verification_key_hash
-    }
+pub fn get_verifier_selector() -> FixedBytes<4> {
+    FixedBytes::<4>::from_slice(&VERIFIER_HASH.as_slice()[..4])
 } 

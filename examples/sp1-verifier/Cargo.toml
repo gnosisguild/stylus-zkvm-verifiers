@@ -32,10 +32,6 @@ mini-alloc = ["stylus-sdk/mini-alloc"]
 name = "sp1-verifier-example"
 path = "src/main.rs"
 
-[[bin]]
-name = "interact"
-path = "bin/interact.rs"
-
 [lib]
 crate-type = ["lib", "cdylib"]
 

@@ -22,7 +22,7 @@ eyre.workspace = true
 stylus-sdk = { workspace = true, features = ["stylus-test"] }
 
 [features]
-default = ["mini-alloc", "risc0"]
+default = ["mini-alloc", "risc0", "sp1"]
 export-abi = ["stylus-sdk/export-abi"]
 debug = ["stylus-sdk/debug"]
 mini-alloc = ["stylus-sdk/mini-alloc"]

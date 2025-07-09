@@ -8,7 +8,7 @@ This library offers verifiers for multiple ZKP systems.
 ## Supported ZKP Systems
 
 - **RISC Zero**: Verify RISC Zero proofs using Groth16
-- **SP1**: Verify SP1 proofs using PLONK
+- **SP1**: Verify SP1 proofs using Groth16/PLONK
 - More verifiers coming soon...
 
 ## Usage
