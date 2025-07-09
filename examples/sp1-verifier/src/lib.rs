@@ -40,8 +40,3 @@ impl ISp1Verifier for Sp1VerifierExample {
         self.verifier.version()
     }
 }
-
-#[cfg(feature = "export-abi")]
-pub fn print_from_args() {
-    stylus_sdk::abi::export_abi::<Sp1VerifierExample>();
-} 
