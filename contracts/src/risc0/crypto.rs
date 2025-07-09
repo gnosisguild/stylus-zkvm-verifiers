@@ -92,12 +92,16 @@ pub mod vk {
 pub mod digest_utils {
     use super::*;
 
-    pub fn split_digest(d: B256) -> ([u8; 16], [u8; 16]) {
-        let mut rev = [0u8; 32];
-        rev.iter_mut()
-            .zip(d.as_slice().iter().rev())
+    pub fn reverse_byte_order_uint256(value: B256) -> B256 {
+        let mut reversed = [0u8; 32];
+        reversed.iter_mut()
+            .zip(value.as_slice().iter().rev())
             .for_each(|(dst, src)| *dst = *src);
+        B256::from(reversed)
+    }
 
+    pub fn split_digest(d: B256) -> ([u8; 16], [u8; 16]) {
+        let rev = reverse_byte_order_uint256(d);
         let mut low = [0u8; 16];
         let mut high = [0u8; 16];
         low.copy_from_slice(&rev[16..]);

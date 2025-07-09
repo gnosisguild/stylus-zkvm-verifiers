@@ -15,6 +15,9 @@ pub fn system_state_zero_digest() -> B256 {
 
 /// Tag constants for digest computation
 pub mod tags {
+    /// Tag for Groth16 receipt verifier parameters digest computation
+    pub const GROTH16_RECEIPT_VERIFIER_PARAMETERS_TAG: &[u8] = b"risc0.Groth16ReceiptVerifierParameters";
+
     /// Tag for ReceiptClaim digest computation
     pub const RECEIPT_CLAIM_TAG: &[u8] = b"risc0.ReceiptClaim";
     

@@ -31,9 +31,8 @@ impl IRiscZeroVerifier for RiscZeroVerifierExample {
         &mut self,
         control_root: B256,
         bn254_control_id: B256,
-        selector: FixedBytes<4>,
     ) -> Result<(), Self::Error> {
-        self.verifier.initialize(control_root, bn254_control_id, selector)
+        self.verifier.initialize(control_root, bn254_control_id)
     }
 
     /// Verify a RISC Zero proof

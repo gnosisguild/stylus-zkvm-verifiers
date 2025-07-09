@@ -1,13 +1,15 @@
 use alloc::{vec, vec::Vec};
 use alloy_primitives::B128;
+use sha2::{Digest, Sha256};
 use stylus_sdk::{
     alloy_primitives::{FixedBytes, B256, U256},
-    alloy_sol_types::SolType,
+    alloy_sol_types::{SolType, SolValue},
     prelude::*,
 };
 
 use crate::common::Groth16Verifier;
 use crate::risc0::{
+    config::tags,
     crypto::{digest_utils, vk},
     errors::RiscZeroError,
     types::{ReceiptClaim, Seal},
@@ -16,12 +18,8 @@ use crate::risc0::{
 pub trait IRiscZeroVerifier {
     type Error;
 
-    fn initialize(
-        &mut self,
-        control_root: B256,
-        bn254_control_id: B256,
-        selector: FixedBytes<4>,
-    ) -> Result<(), Self::Error>;
+    fn initialize(&mut self, control_root: B256, bn254_control_id: B256)
+        -> Result<(), Self::Error>;
 
     fn verify(
         &self,
@@ -61,7 +59,6 @@ impl IRiscZeroVerifier for RiscZeroVerifier {
         &mut self,
         control_root: B256,
         bn254_control_id: B256,
-        selector: FixedBytes<4>,
     ) -> Result<(), Self::Error> {
         if self.initialized.get() {
             return Err(RiscZeroError::ALREADY_INITIALIZED.abi_encode());
@@ -71,6 +68,7 @@ impl IRiscZeroVerifier for RiscZeroVerifier {
         self.control_root_0.set(B128::from(ctrl_lo));
         self.control_root_1.set(B128::from(ctrl_hi));
         self.bn254_control_id.set(bn254_control_id);
+        let selector = Self::calculate_selector(control_root, bn254_control_id);
         self.selector.set(selector);
         self.initialized.set(true);
 
@@ -127,6 +125,24 @@ impl IRiscZeroVerifier for RiscZeroVerifier {
 }
 
 impl RiscZeroVerifier {
+    fn calculate_selector(control_root: B256, bn254_control_id: B256) -> FixedBytes<4> {
+        let tag_digest = B256::from_slice(&Sha256::digest(
+            tags::GROTH16_RECEIPT_VERIFIER_PARAMETERS_TAG,
+        ));
+
+        let packed_data = (
+            tag_digest,
+            control_root,
+            digest_utils::reverse_byte_order_uint256(bn254_control_id),
+            digest_utils::compute_verifier_key_digest(),
+            3u16 << 8,
+        )
+            .abi_encode_packed();
+
+        let hash = Sha256::digest(&packed_data);
+        FixedBytes::<4>::from_slice(&hash[..4])
+    }
+
     fn verify_integrity_internal(
         &self,
         seal: Vec<u8>,
@@ -177,4 +193,4 @@ impl RiscZeroVerifier {
 
         Ok(true)
     }
-} 
+}

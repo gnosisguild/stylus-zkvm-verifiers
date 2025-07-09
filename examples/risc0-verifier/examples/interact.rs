@@ -32,7 +32,7 @@ sol! {
     #[derive(Debug)]
     #[sol(rpc)]
     contract RiscZeroVerifier {
-        function initialize(bytes32 control_root, bytes32 bn254_control_id, bytes4 selector) external;
+        function initialize(bytes32 control_root, bytes32 bn254_control_id) external;
         function verify(uint8[] memory seal, bytes32 image_id, bytes32 journal_digest) external view returns (bool);
         function verifyIntegrity(bytes memory receipt_seal, bytes32 receipt_claim_digest) external view returns (bool);
         function isInitialized() external view returns (bool);
@@ -82,14 +82,12 @@ async fn main() -> Result<()> {
         let bn254_control_id = B256::from_slice(&hex!(
             "04446e66d300eb7fb45c9726bb53c793dda407a62e9601618bb43c5c14657ac0"
         ));
-        let selector = FixedBytes::<4>::from([0x9f, 0x39, 0x69, 0x6c]);
 
         println!("  Control Root: 0x{}", hex::encode(control_root));
         println!("  BN254 Control ID: 0x{}", hex::encode(bn254_control_id));
-        println!("  Selector: 0x{}", hex::encode(selector));
 
         let tx = verifier
-            .initialize(control_root, bn254_control_id, selector)
+            .initialize(control_root, bn254_control_id)
             .send()
             .await?;
         let receipt = tx.get_receipt().await?;
