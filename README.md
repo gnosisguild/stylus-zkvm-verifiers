@@ -22,7 +22,7 @@ stylus-zkvm-verifiers/
 │   ├── src/
 │   │   ├── common/              # Shared cryptographic utilities
 │   │   ├── risc0/               # RISC Zero Groth16 verifier
-│   │   └── sp1/                 # SP1 PLONK verifier (TODO)
+│   │   └── sp1/                 # SP1 Groth16 verifier (PLONK in progress)
 │   └── Cargo.toml
 ├── examples/                     # 🏗️ Complete contract examples
 │   ├── risc0-verifier/          # Working RISC Zero contract
