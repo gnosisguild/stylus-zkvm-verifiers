@@ -104,7 +104,7 @@ cargo run --example interact
 
 ```toml
 [dependencies]
-stylus-zkvm-verifiers = { path = "../path/to/contracts", features = ["risc0"] }
+stylus-zkvm-verifiers = { git = "https://github.com/gnosisguild/stylus-zkvm-verifiers", features = ["risc0"] }
 ```
 
 ### Feature Flags
@@ -116,31 +116,33 @@ stylus-zkvm-verifiers = { path = "../path/to/contracts", features = ["risc0"] }
 ### Example Usage
 
 ```rust
-use stylus_zkp_verifiers::risc0::RiscZeroConfig;
+use stylus_zkp_verifiers::risc0::{RiscZeroVerifier, IRiscZeroVerifier};
 use stylus_sdk::prelude::*;
 
 #[storage]
 #[entrypoint]
 pub struct MyVerifier {
-    risc0: RiscZeroConfig,
+    risc0: RiscZeroVerifier,
 }
 
 #[public]
-impl MyVerifier {
+#[implements(IRiscZeroVerifier<Error = Vec<u8>>)]
+impl MyVerifier {}
+
+#[public]
+impl IRiscZeroVerifier for MyVerifier {
+    type Error = Vec<u8>;
+
     pub fn verify_risc0_proof(
         &self,
         seal: Vec<u8>,
-        receipt: Vec<u8>,
+        image_id: B256,
+        journal_digest: B256,
     ) -> bool {
-        // Your verification logic
-        true
+        self.risc0.verify(seal, image_id, journal_digest)
     }
 }
 ```
-
-## 🧪 Verification Results
-
-TBA
 
 ### Adding New Verifiers
 
