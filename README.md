@@ -2,6 +2,11 @@
 
 A comprehensive library for zero-knowledge proof verification on [Arbitrum Stylus](https://docs.arbitrum.io/stylus/gentle-introduction). This library provides a modular architecture for integrating multiple ZKP verification systems into your smart contracts. Each zkVM system is isolated in its own module and can be compiled and deployed separately. You only need to compile the verifiers you need using feature flags.
 
+> [!CAUTION]
+>
+> This repository is not audited for production use.
+
+
 ## 📋 Supported zkVM Systems
 
 | System | Status | Proof System | Version |
