@@ -26,7 +26,7 @@ stylus-zkvm-verifiers/
 │   └── Cargo.toml
 ├── examples/                     # 🏗️ Complete contract examples
 │   ├── risc0-verifier/          # Working RISC Zero contract
-│   └── sp1-verifier/            # SP1 mock contract
+│   └── sp1-verifier/            # Working SP1 contract
 └── Cargo.toml                   # Workspace configuration
 ```
 
@@ -110,7 +110,7 @@ stylus-zkvm-verifiers = { path = "../path/to/contracts", features = ["risc0"] }
 ### Feature Flags
 
 - `risc0`: Enable RISC Zero verifier
-- `sp1`: Enable SP1 verifier (mock)
+- `sp1`: Enable SP1 verifier
 - `export-abi`: Enable ABI export for deployment
 
 ### Example Usage
