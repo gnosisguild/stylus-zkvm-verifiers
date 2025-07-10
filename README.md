@@ -58,7 +58,12 @@ stylus-zkvm-verifiers/
 cargo install --force cargo-stylus
 ```
 
-2. **Setup Nitro Dev Node** (required for local testing):
+2. **Install WebAssembly Target**
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+3. **Setup Nitro Dev Node** (required for local testing):
 ```bash
 git clone https://github.com/OffchainLabs/nitro-devnode.git
 cd nitro-devnode
