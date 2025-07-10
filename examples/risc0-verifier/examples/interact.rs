@@ -20,7 +20,7 @@ cargo run --example interact
 
 use alloy::{
     network::EthereumWallet,
-    primitives::{hex, B256, FixedBytes},
+    primitives::{hex, B256},
     providers::ProviderBuilder,
     signers::local::PrivateKeySigner,
     sol,

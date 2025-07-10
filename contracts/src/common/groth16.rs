@@ -4,30 +4,14 @@ use stylus_sdk::{
     call::RawCall,
 };
 
-const R: U256 = uint!(0x30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001_U256);
-const Q: U256 = uint!(0x30644E72E131A029B85045B68181585D97816A916871CA8D3C208C16D87CFD47_U256);
+use super::types::{G1Point, G2Point, VMType, VerificationKey};
 
-#[derive(Clone, Copy)]
-pub struct G1Point {
-    pub x: U256,
-    pub y: U256,
-}
+pub const R: U256 = uint!(0x30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001_U256);
+pub const Q: U256 = uint!(0x30644E72E131A029B85045B68181585D97816A916871CA8D3C208C16D87CFD47_U256);
 
-#[derive(Clone, Copy)]
-pub struct G2Point {
-    /// `x = x_c0 + x_c1·u`
-    pub x: [U256; 2],
-    /// `y = y_c0 + y_c1·u`
-    pub y: [U256; 2],
-}
-
-pub struct VerificationKey {
-    pub alpha1: G1Point,
-    pub beta2: G2Point,
-    pub gamma2: G2Point,
-    pub delta2: G2Point,
-    pub ic: &'static [G1Point],
-}
+const EC_ADD_BYTES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6];
+const EC_MUL_BYTES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7];
+const EC_PAIRING_BYTES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8];
 
 pub struct Groth16Verifier;
 
@@ -38,31 +22,21 @@ impl Groth16Verifier {
 
     pub fn verify_proof_with_key(
         &self,
+        vm_type: VMType,
         vk: &VerificationKey,
         a: [U256; 2],
         b: [[U256; 2]; 2],
         c: [U256; 2],
         public_signals: &[U256],
     ) -> bool {
-        if public_signals.len() + 1 != vk.ic.len() {
+        if public_signals.len() + 1 != vk.ic.len() || public_signals.iter().any(|&x| x >= R) {
             return false;
         }
 
-        if public_signals.iter().any(|&x| x >= R) {
-            return false;
-        }
-
-        let mut vk_x = vk.ic[0];
-        for (sig, ic) in public_signals.iter().zip(&vk.ic[1..]) {
-            if let Ok(t) = self
-                .scalar_mul(ic, *sig)
-                .and_then(|p| self.point_add(&vk_x, &p))
-            {
-                vk_x = t;
-            } else {
-                return false;
-            }
-        }
+        let vk_x = match self.compute_vk_x(vk, public_signals) {
+            Ok(x) => x,
+            Err(_) => return false,
+        };
 
         let proof_a = G1Point { x: a[0], y: a[1] };
         let proof_b = G2Point {
@@ -71,110 +45,87 @@ impl Groth16Verifier {
         };
         let proof_c = G1Point { x: c[0], y: c[1] };
 
-        match self.pairing_check(
-            &self.negate(&proof_a),
-            &proof_b,
-            &vk.alpha1,
-            &vk.beta2,
-            &vk_x,
-            &vk.gamma2,
-            &proof_c,
-            &vk.delta2,
-        ) {
-            Ok(ok) => ok,
-            Err(_) => false,
-        }
+        self.verify_pairing(vm_type, &proof_a, &proof_b, &proof_c, &vk_x, vk)
     }
 
-    fn negate(&self, p: &G1Point) -> G1Point {
+    fn compute_vk_x(&self, vk: &VerificationKey, signals: &[U256]) -> Result<G1Point, ()> {
+        let mut vk_x = vk.ic[0];
+        for (sig, ic) in signals.iter().zip(&vk.ic[1..]) {
+            let mul_result = self.ec_call(&EC_MUL_BYTES, &[ic.x, ic.y, *sig])?;
+            vk_x = self.ec_call(&EC_ADD_BYTES, &[vk_x.x, vk_x.y, mul_result.x, mul_result.y])?;
+        }
+        Ok(vk_x)
+    }
+
+    fn ec_call(&self, addr_bytes: &[u8; 20], params: &[U256]) -> Result<G1Point, ()> {
+        let calldata: Vec<u8> = params.iter().flat_map(|x| x.to_be_bytes::<32>()).collect();
+
+        unsafe {
+            RawCall::new_static()
+                .gas(u64::MAX)
+                .call(Address::from(*addr_bytes), &calldata)
+        }
+        .map(|ret| G1Point {
+            x: U256::from_be_slice(&ret[0..32]),
+            y: U256::from_be_slice(&ret[32..64]),
+        })
+        .map_err(|_| ())
+    }
+
+    fn negate_g1(&self, p: &G1Point) -> G1Point {
         if p.x.is_zero() && p.y.is_zero() {
-            return *p;
-        }
-        G1Point {
-            x: p.x,
-            y: Q - (p.y % Q),
+            *p
+        } else {
+            G1Point {
+                x: p.x,
+                y: Q.wrapping_sub(p.y),
+            }
         }
     }
 
-    fn point_add(&self, p1: &G1Point, p2: &G1Point) -> Result<G1Point, Vec<u8>> {
-        let calldata = [p1.x, p1.y, p2.x, p2.y]
-            .into_iter()
-            .flat_map(to_bytes)
-            .collect::<Vec<u8>>();
-
-        unsafe {
-            RawCall::new_static().gas(u64::MAX).call(
-                Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6]),
-                &calldata,
-            )
-        }
-        .map(|ret| G1Point {
-            x: U256::from_be_slice(&ret[0..32]),
-            y: U256::from_be_slice(&ret[32..64]),
-        })
-        .map_err(|_| b"point_add failed".to_vec())
-    }
-
-    fn scalar_mul(&self, p: &G1Point, s: U256) -> Result<G1Point, Vec<u8>> {
-        let calldata = [p.x, p.y, s]
-            .into_iter()
-            .flat_map(to_bytes)
-            .collect::<Vec<u8>>();
-
-        unsafe {
-            RawCall::new_static().gas(u64::MAX).call(
-                Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7]),
-                &calldata,
-            )
-        }
-        .map(|ret| G1Point {
-            x: U256::from_be_slice(&ret[0..32]),
-            y: U256::from_be_slice(&ret[32..64]),
-        })
-        .map_err(|_| b"scalar_mul failed".to_vec())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn pairing_check(
+    fn verify_pairing(
         &self,
-        a1: &G1Point,
-        a2: &G2Point,
-        b1: &G1Point,
-        b2: &G2Point,
-        c1: &G1Point,
-        c2: &G2Point,
-        d1: &G1Point,
-        d2: &G2Point,
-    ) -> Result<bool, Vec<u8>> {
-        let mut calldata = Vec::<u8>::with_capacity(24 * 32);
-
-        let mut push = |g1: &G1Point, g2: &G2Point| {
-            calldata.extend_from_slice(&to_bytes(g1.x));
-            calldata.extend_from_slice(&to_bytes(g1.y));
-            calldata.extend_from_slice(&to_bytes(g2.x[0]));
-            calldata.extend_from_slice(&to_bytes(g2.x[1]));
-            calldata.extend_from_slice(&to_bytes(g2.y[0]));
-            calldata.extend_from_slice(&to_bytes(g2.y[1]));
+        vm: VMType,
+        a: &G1Point,
+        b: &G2Point,
+        c: &G1Point,
+        l: &G1Point,
+        vk: &VerificationKey,
+    ) -> bool {
+        let (g1s, g2s) = match vm {
+            VMType::Risc0 => (
+                [self.negate_g1(a), vk.alpha1, *l, *c],
+                [*b, vk.beta2, vk.gamma2, vk.delta2],
+            ),
+            VMType::Sp1 => (
+                [*a, vk.alpha1, *l, *c],
+                [*b, vk.beta2, vk.gamma2, vk.delta2],
+            ),
         };
 
-        push(a1, a2);
-        push(b1, b2);
-        push(c1, c2);
-        push(d1, d2);
+        self.pairing_check(&g1s, &g2s).unwrap_or(false)
+    }
+
+    fn pairing_check(&self, g1s: &[G1Point; 4], g2s: &[G2Point; 4]) -> Result<bool, ()> {
+        let mut calldata = Vec::with_capacity(768); // 4 * 6 * 32 bytes
+
+        for (g1, g2) in g1s.iter().zip(g2s.iter()) {
+            calldata.extend_from_slice(&g1.x.to_be_bytes::<32>());
+            calldata.extend_from_slice(&g1.y.to_be_bytes::<32>());
+            calldata.extend_from_slice(&g2.x[0].to_be_bytes::<32>());
+            calldata.extend_from_slice(&g2.x[1].to_be_bytes::<32>());
+            calldata.extend_from_slice(&g2.y[0].to_be_bytes::<32>());
+            calldata.extend_from_slice(&g2.y[1].to_be_bytes::<32>());
+        }
 
         unsafe {
-            RawCall::new_static().gas(u64::MAX).call(
-                Address::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8]),
-                &calldata,
-            )
+            RawCall::new_static()
+                .gas(u64::MAX)
+                .call(Address::from(EC_PAIRING_BYTES), &calldata)
         }
         .map(|ret| !U256::from_be_slice(&ret[0..32]).is_zero())
-        .map_err(|_| b"pairing failed".to_vec())
+        .map_err(|_| ())
     }
-}
-
-fn to_bytes(x: U256) -> [u8; 32] {
-    x.to_be_bytes()
 }
 
 impl Default for Groth16Verifier {

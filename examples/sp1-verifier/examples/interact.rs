@@ -12,8 +12,8 @@ sol! {
     #[derive(Debug)]
     #[sol(rpc)]
     interface ISp1Verifier {
-        function verifyProof(bytes32 programVKey, bytes calldata publicValues, bytes calldata proofBytes) external view;
-        function verifier_hash() external view returns (bytes32);
+        function verifyProof(bytes32 programVKey, uint8[] calldata publicValues, uint8[] calldata proofBytes) external view;
+        function verifierHash() external view returns (bytes32);
         function version() external view returns (string memory);
     }
 }
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         Err(e) => println!("   • Version: Error - {}", e),
     }
     
-    match verifier.verifier_hash().call().await {
+    match verifier.verifierHash().call().await {
         Ok(hash) => println!("   • Verifier Hash: {:#x}", hash._0),
         Err(e) => println!("   • Verifier Hash: Error - {}", e),
     }
@@ -69,8 +69,9 @@ async fn main() -> Result<()> {
         .await
     {
         Ok(_) => {
-            println!("✅ SP1 proof verification SUCCESSFUL!");
+            println!("🎉 PROOF VERIFICATION SUCCESSFUL!");
             println!("   The provided proof is valid for the given program and public values.");
+            println!("\n🏁 Verification complete!");
         }
         Err(e) => {
             println!("❌ SP1 proof verification FAILED!");
@@ -82,7 +83,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    println!("\n✨ SP1 Verifier interaction complete!");
     Ok(())
 }
 
@@ -94,8 +94,8 @@ struct TestFixture {
 
 fn load_test_fixture() -> TestFixture {
     TestFixture {
-        vkey: B256::from_slice(&hex::decode("00b51cef3572d1a49ae7f4a332221cab31cdb72b131dbf28fb6ab26e15458fe2").unwrap()),
-        public_values: hex::decode("00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000001a6d0000000000000000000000000000000000000000000000000000000000002ac2").unwrap(),
-        proof: hex::decode("11b6a09d07727e8889e440a3a4fe6b3cc7e438d232daa177c762d3267ada247e165b06ca1beaf42fbaaa7676caf3dd978af6c1b7b64968f67f41e3d356790a09337566d81122aa6904fd105ff2a499c1f3264a3f55e740cda6521be1877225f4073f7a4a22fe10987f12d67a145738de4e301bb8e37347556bead5bb003ce32653ffae5a281be092e26c9d16eb569b3592eb766b0197fe05d359952a05958b2596239f061333369ab1d6576f80e965d0e3d8f1d3a74722e794e72199c3dee91bff8f3a5e087ac3fac78f5372befa133b94764b43c4c88ee4f3fc0495e52c74ad5a6d2c18008e6740d0aad32976971c95db159fb37d4f8428d7c5abe658a58d516acd664c").unwrap(),
+        vkey: B256::from_slice(&hex!("0x00d2f2f7952cbd9ececcf5303b2da21af20dc24953485d345df73c2854f498bc")),
+        public_values: hex::decode("0x00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000001a6d0000000000000000000000000000000000000000000000000000000000002ac2").unwrap(),
+        proof: hex::decode("0xa4594c5929754e82587e66fd1bb8d8e4e98e6777a1adf400c405506a09173829f224450f1b17a81870ab2aef2fbbb236f1d397bb6c4ff793bf0e350d58fc191b5e85d7233010220b72c9ee5cb184f6c2bf486f3cae5d21c1e7145e957f36d8716df245c7028365cbff8d03a827a8fcfadb43af2c15c7ca2434db227ab399719aeae87e2d111448ae96af93c333b0a23f9a4be33c6396d1ab823d927d51153d05ec87df332988ebd31b243498e1cb1f8d97f84324ad242e7bc3ea9c1bf3165be46b8302952f3ea26440093819356240a700aa424487f6aab1eb664e5aed296c8356b252f11579161a3ec93bdb657e57ba9d5480195da51d0a74ea2f343f85a12f8d2477eb").unwrap(),
     }
-} 
+}

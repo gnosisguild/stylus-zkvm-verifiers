@@ -5,7 +5,7 @@ use stylus_sdk::{
 };
 
 use crate::sp1::config;
-
+use crate::common::groth16::R;
 sol! {
     struct Sp1Proof {
         uint256[8] proof;
@@ -26,7 +26,6 @@ impl Sp1PublicInputs {
         }
     }
 
-    /// Convert to array format for verification
     pub fn to_array(&self) -> [U256; 2] {
         [self.program_vkey, self.public_values_digest]
     }
@@ -35,5 +34,5 @@ impl Sp1PublicInputs {
 pub fn hash_public_values(public_values: &[u8]) -> U256 {
     let hash = Sha256::digest(public_values);
     let hash_u256 = U256::from_be_bytes(hash.into());
-    hash_u256 & config::FIELD_MASK
+    (hash_u256 & config::FIELD_MASK) % R
 } 

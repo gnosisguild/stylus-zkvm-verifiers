@@ -1,11 +1,11 @@
-use alloc::{vec, vec::Vec, string::String};
+use alloc::{string::String, vec, vec::Vec};
 use stylus_sdk::{
     alloy_primitives::{FixedBytes, B256},
     alloy_sol_types::SolType,
     prelude::*,
 };
 
-use crate::common::Groth16Verifier;
+use crate::common::{Groth16Verifier, VMType};
 use crate::sp1::{
     config,
     crypto::vk,
@@ -22,7 +22,7 @@ pub trait ISp1Verifier {
         public_values: Vec<u8>,
         proof_bytes: Vec<u8>,
     ) -> Result<(), Self::Error>;
-
+    
     fn verifier_hash(&self) -> B256;
 
     fn version(&self) -> String;
@@ -67,12 +67,13 @@ impl Sp1Verifier {
 
         let received_selector = FixedBytes::<4>::from_slice(&proof_bytes[..4]);
         let expected_selector = config::get_verifier_selector();
-        
+
         if received_selector != expected_selector {
             return Err(Sp1Error::WrongVerifierSelector {
                 received: received_selector,
                 expected: expected_selector,
-            }.abi_encode());
+            }
+            .abi_encode());
         }
 
         let proof_data = &proof_bytes[4..];
@@ -86,11 +87,15 @@ impl Sp1Verifier {
 
         let proof_array = sp1_proof.proof;
         let a = [proof_array[0], proof_array[1]];
-        let b = [[proof_array[2], proof_array[3]], [proof_array[4], proof_array[5]]];
+        let b = [
+            [proof_array[2], proof_array[3]],
+            [proof_array[4], proof_array[5]],
+        ];
         let c = [proof_array[6], proof_array[7]];
 
         let verification_key = vk::get_verification_key();
         let verified = Groth16Verifier::new().verify_proof_with_key(
+            VMType::Sp1,
             &verification_key,
             a,
             b,
@@ -104,4 +109,4 @@ impl Sp1Verifier {
 
         Ok(())
     }
-} 
+}

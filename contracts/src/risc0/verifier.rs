@@ -7,7 +7,7 @@ use stylus_sdk::{
     prelude::*,
 };
 
-use crate::common::Groth16Verifier;
+use crate::common::{Groth16Verifier, VMType};
 use crate::risc0::{
     config::tags,
     crypto::{digest_utils, vk},
@@ -180,6 +180,7 @@ impl RiscZeroVerifier {
 
         let verification_key = vk::get_verification_key();
         let verified = Groth16Verifier::new().verify_proof_with_key(
+            VMType::Risc0,
             &verification_key,
             decoded_seal.a,
             decoded_seal.b,

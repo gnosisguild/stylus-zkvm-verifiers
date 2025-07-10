@@ -4,10 +4,10 @@ A comprehensive library for zero-knowledge proof verification on [Arbitrum Stylu
 
 ## 📋 Supported zkVM Systems
 
-| System | Status | Proof System | Features | Version |
-|--------|--------|--------------|----------|---------|
-| **RISC Zero** | ✅ | Groth16 | Selectors, control roots, receipt verification | v2.1 |
-| **SP1** | 🚧 In Progress | Groth16/PLONK | Verification key setup | v3.0.0 |
+| System | Status | Proof System | Version |
+|--------|--------|--------------|----------|
+| **RISC Zero** | ✅ | Groth16 | v2.1 |
+| **SP1** | ✅ | Groth16 | v5.0.0 |
 
 ## 📁 Project Structure
 
