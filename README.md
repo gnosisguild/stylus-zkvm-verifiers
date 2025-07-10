@@ -53,7 +53,12 @@ stylus-zkvm-verifiers/
 
 ### Prerequisites
 
-1. **Setup Nitro Dev Node** (required for local testing):
+1. **Install Stylus CLI**
+```bash
+cargo install --force cargo-stylus
+```
+
+2. **Setup Nitro Dev Node** (required for local testing):
 ```bash
 git clone https://github.com/OffchainLabs/nitro-devnode.git
 cd nitro-devnode
