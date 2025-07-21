@@ -68,10 +68,15 @@ async fn main() -> Result<()> {
         .call()
         .await
     {
-        Ok(_) => {
-            println!("🎉 PROOF VERIFICATION SUCCESSFUL!");
-            println!("   The provided proof is valid for the given program and public values.");
-            println!("\n🏁 Verification complete!");
+        Ok(result) => {
+            if result._0 {
+                println!("🎉 PROOF VERIFICATION SUCCESSFUL!");
+                println!("   The provided proof is valid for the given program and public values.");
+                println!("\n🏁 Verification complete!");
+            } else {
+                println!("❌ PROOF VERIFICATION FAILED!");
+                println!("   The provided proof is invalid for the given program and public values.");
+            }
         }
         Err(e) => {
             println!("❌ SP1 proof verification FAILED!");

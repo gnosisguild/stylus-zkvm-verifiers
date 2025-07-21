@@ -41,7 +41,8 @@ impl IRiscZeroVerifier for MyContract {
 ## Features
 
 - `risc0`: Enable RISC Zero verifier support
-- `sp1`: Enable SP1 verifier support
+- `sp1`: Enable SP1 Groth16 verifier support
+- `sp1-plonk`: Enable SP1 Plonk verifier support
 */
 
 #![cfg_attr(not(any(test, feature = "export-abi")), no_std)]
