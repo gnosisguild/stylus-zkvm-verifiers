@@ -1,7 +1,7 @@
 use alloy::{
     network::EthereumWallet,
-    primitives::{hex, B256},
-    providers::ProviderBuilder,
+    primitives::{hex, Address, B256},
+    providers::{Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
     sol,
 };
@@ -41,7 +41,16 @@ async fn main() -> Result<()> {
         .wallet(wallet)
         .on_http(rpc_url.parse()?);
 
-    let verifier = ISp1Verifier::new(contract_address.parse()?, provider);
+    let contract_addr: Address = contract_address.parse()?;
+    
+    // Check if contract exists to avoid false positive verification
+    let code = provider.get_code_at(contract_addr).await?;
+    if code.is_empty() {
+        println!("❌ Error: No contract found at address {}", contract_address);
+        return Ok(());
+    }
+
+    let verifier = ISp1Verifier::new(contract_addr, provider);
 
     // Test verifier info
     println!("\n📋 Verifier Information:");
@@ -49,7 +58,7 @@ async fn main() -> Result<()> {
         Ok(version) => println!("   • Version: {}", version._0),
         Err(e) => println!("   • Version: Error - {}", e),
     }
-    
+
     match verifier.verifierHash().call().await {
         Ok(hash) => println!("   • Verifier Hash: {:#x}", hash._0),
         Err(e) => println!("   • Verifier Hash: Error - {}", e),
@@ -59,12 +68,19 @@ async fn main() -> Result<()> {
     let test_data = load_test_fixture();
     println!("📁 Loaded test fixture:");
     println!("   • Program VKey: {:#x}", test_data.vkey);
-    println!("   • Public Values: {} bytes", test_data.public_values.len());
+    println!(
+        "   • Public Values: {} bytes",
+        test_data.public_values.len()
+    );
     println!("   • Proof: {} bytes", test_data.proof.len());
     println!();
 
     match verifier
-        .verifyProof(test_data.vkey, test_data.public_values.into(), test_data.proof.into())
+        .verifyProof(
+            test_data.vkey,
+            test_data.public_values.into(),
+            test_data.proof.into(),
+        )
         .call()
         .await
     {
@@ -76,7 +92,7 @@ async fn main() -> Result<()> {
         Err(e) => {
             println!("❌ SP1 proof verification FAILED!");
             println!("   Error: {}", e);
-            
+
             if let Some(revert_reason) = e.to_string().split("reverted: ").nth(1) {
                 println!("   Revert reason: {}", revert_reason);
             }

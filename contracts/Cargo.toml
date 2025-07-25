@@ -22,13 +22,13 @@ eyre.workspace = true
 stylus-sdk = { workspace = true, features = ["stylus-test"] }
 
 [features]
-default = ["mini-alloc", "risc0", "sp1"]
+default = ["mini-alloc", "risc0", "sp1", "sp1-plonk"]
 export-abi = ["stylus-sdk/export-abi"]
 debug = ["stylus-sdk/debug"]
 mini-alloc = ["stylus-sdk/mini-alloc"]
-# Individual verifier features
 risc0 = []
 sp1 = []
+sp1-plonk = []
 
 [lib]
 crate-type = ["lib"] 

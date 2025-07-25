@@ -1,12 +1,12 @@
 use stylus_sdk::alloy_primitives::U256;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct G1Point {
     pub x: U256,
     pub y: U256,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct G2Point {
     /// `x = x_c0 + x_c1·u`
     pub x: [U256; 2],

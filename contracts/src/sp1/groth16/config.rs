@@ -1,4 +1,4 @@
-use stylus_sdk::alloy_primitives::{FixedBytes, B256, U256};
+use stylus_sdk::alloy_primitives::{FixedBytes, B256};
 
 pub const VERSION: &str = "v5.0.0";
 pub const VERIFIER_HASH: B256 = B256::new([
@@ -6,13 +6,6 @@ pub const VERIFIER_HASH: B256 = B256::new([
     0xb8, 0x1c, 0x3e, 0xcb, 0x7f, 0x50, 0xa7, 0xc3,
     0x4b, 0xc9, 0xaf, 0x7c, 0x4c, 0x44, 0x4b, 0x5d,
     0x48, 0xb7, 0x95, 0x42, 0x7e, 0x28, 0x59, 0x13,
-]);
-
-pub const FIELD_MASK: U256 = U256::from_limbs([
-    0xffffffffffffffff,
-    0xffffffffffffffff,
-    0xffffffffffffffff,
-    0x1fffffffffffffff,
 ]);
 
 pub fn get_verifier_selector() -> FixedBytes<4> {
