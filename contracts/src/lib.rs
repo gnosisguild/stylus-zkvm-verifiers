@@ -23,18 +23,24 @@ stylus-zkp-verifiers = "0.1.0"
 Then import the verifier you need:
 
 ```rust
+// For RISC Zero verification
 use stylus_zkvm_verifiers::risc0::{RiscZeroVerifier, IRiscZeroVerifier};
+
+// For SP1 Groth16 verification (requires "sp1" feature)
+use stylus_zkvm_verifiers::sp1::{Sp1Verifier, ISp1Verifier};
+
+// For SP1 PLONK verification (requires "sp1-plonk" feature)
+use stylus_zkvm_verifiers::sp1::{Sp1PlonkVerifier, ISp1PlonkVerifier};
+
 use stylus_sdk::prelude::*;
 
 #[entrypoint]
 #[storage]
 struct MyContract {
-    verifier: RiscZeroVerifier,
-}
-
-#[public]
-impl IRiscZeroVerifier for MyContract {
-    // Implementation here
+    // Choose the verifier you need
+    risc0_verifier: RiscZeroVerifier,
+    sp1_groth16_verifier: Sp1Verifier,
+    sp1_plonk_verifier: Sp1PlonkVerifier,
 }
 ```
 
@@ -54,7 +60,7 @@ pub mod common;
 #[cfg(feature = "risc0")]
 pub mod risc0;
 
-#[cfg(feature = "sp1")]
+#[cfg(any(feature = "sp1", feature = "sp1-plonk"))]
 pub mod sp1;
 
 // Re-export commonly used types

@@ -6,7 +6,7 @@ use stylus_sdk::{
 };
 
 use crate::common::{Groth16Verifier, VMType};
-use crate::sp1::{
+use crate::sp1::groth16::{
     config,
     crypto::vk,
     errors::Sp1Error,

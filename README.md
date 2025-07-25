@@ -13,6 +13,7 @@ A comprehensive library for zero-knowledge proof verification on [Arbitrum Stylu
 |--------|--------|--------------|----------|
 | **RISC Zero** | ✅ | Groth16 | v2.1 |
 | **SP1** | ✅ | Groth16 | v5.0.0 |
+| **SP1 Plonk** | In Progress | Plonk | v5.0.0 |
 
 ## 📁 Project Structure
 
@@ -21,18 +22,25 @@ stylus-zkvm-verifiers/
 ├── contracts/                    # 📚 Main verification library
 │   ├── src/
 │   │   ├── common/              # Shared cryptographic utilities
+│   │   │   ├── groth16.rs       # Groth16 verification logic
+│   │   │   ├── plonk.rs         # Plonk verification logic
+│   │   │   └── types.rs         # Common cryptographic types
 │   │   ├── risc0/               # RISC Zero Groth16 verifier
-│   │   └── sp1/                 # SP1 Groth16 verifier (PLONK in progress)
+│   │   └── sp1/                 # SP1 verifiers
+│   │       ├── groth16/         # SP1 Groth16 verifier
+│   │       └── plonk/           # SP1 Plonk verifier
 │   └── Cargo.toml
 ├── examples/                     # 🏗️ Complete contract examples
 │   ├── risc0-verifier/          # Working RISC Zero contract
-│   └── sp1-verifier/            # Working SP1 contract
+│   ├── sp1-verifier/            # Working SP1 Groth16 contract
+│   └── sp1-plonk-verifier/      # Working SP1 Plonk contract
 └── Cargo.toml                   # Workspace configuration
 ```
 
 ## 📚 Library Contracts
 - RISC Zero Verifier (`contracts/src/risc0/`)
-- SP1 Verifier (`contracts/src/sp1/`)
+- SP1 Groth16 Verifier (`contracts/src/sp1/groth16/`)
+- SP1 Plonk Verifier (`contracts/src/sp1/plonk/`)
 
 ## 🏗️ Example Contracts
 
@@ -120,7 +128,8 @@ stylus-zkvm-verifiers = { git = "https://github.com/gnosisguild/stylus-zkvm-veri
 ### Feature Flags
 
 - `risc0`: Enable RISC Zero verifier
-- `sp1`: Enable SP1 verifier
+- `sp1`: Enable SP1 Groth16 verifier
+- `sp1-plonk`: Enable SP1 Plonk verifier
 - `export-abi`: Enable ABI export for deployment
 
 ### Example Usage
@@ -157,6 +166,6 @@ impl IRiscZeroVerifier for MyVerifier {
 ### Adding New Verifiers
 
 1. Create module in `contracts/src/your_zkp/`
-2. Follow the established patterns from `risc0/` 
+2. Follow the established patterns from `risc0/` or `sp1/plonk/`
 3. Add feature flag and example
 4. Ensure complete isolation from other verifiers

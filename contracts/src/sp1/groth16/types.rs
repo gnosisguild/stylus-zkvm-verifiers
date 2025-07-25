@@ -4,7 +4,6 @@ use stylus_sdk::{
     alloy_sol_types::sol,
 };
 
-use crate::sp1::config;
 use crate::common::groth16::R;
 sol! {
     struct Sp1Proof {
@@ -32,7 +31,8 @@ impl Sp1PublicInputs {
 }
 
 pub fn hash_public_values(public_values: &[u8]) -> U256 {
-    let hash = Sha256::digest(public_values);
+    let mut hash = Sha256::digest(public_values);
+    hash[0] &= 0x1F;
     let hash_u256 = U256::from_be_bytes(hash.into());
-    (hash_u256 & config::FIELD_MASK) % R
+    hash_u256 % R
 } 

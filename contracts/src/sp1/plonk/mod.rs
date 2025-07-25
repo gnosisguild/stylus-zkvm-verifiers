@@ -4,8 +4,6 @@ pub mod errors;
 pub mod types;
 pub mod verifier;
 
-pub use config::*;
-pub use crypto::*;
-pub use errors::*;
-pub use types::*;
-pub use verifier::*;
+pub use errors::Sp1PlonkError;
+pub use types::{PlonkProof, PlonkVerifyingKey};
+pub use verifier::{Sp1PlonkVerifier, ISp1PlonkVerifier};

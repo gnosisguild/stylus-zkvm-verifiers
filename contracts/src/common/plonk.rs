@@ -1,785 +1,413 @@
 use alloc::vec::Vec;
-use stylus_sdk::{
-    alloy_primitives::{uint, Address, U256},
-    call::RawCall,
+use alloc::vec;
+use stylus_sdk::alloy_primitives::U256;
+
+use crate::sp1::plonk::{
+    config,
+    crypto::{ec, fs, hash_to_field, math, utils},
+    types::{BatchOpeningProof, OpeningProof, PlonkProof, PlonkVerifyingKey},
 };
+use crate::common::G1Point;
 
-use super::types::{G1Point, G2Point, PlonkProof, PlonkVerificationKey, PlonkChallenges};
+const GAMMA: &str = "gamma";
+const BETA: &str = "beta";
+const ALPHA: &str = "alpha";
+const ZETA: &str = "zeta";
+const U: &str = "u";
 
-pub const R: U256 = uint!(0x30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001_U256);
-pub const Q: U256 = uint!(0x30644E72E131A029B85045B68181585D97816A916871CA8D3C208C16D87CFD47_U256);
-
-const EC_ADD_BYTES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6];
-const EC_MUL_BYTES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7];
-const EC_PAIRING_BYTES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8];
-
-pub struct PlonkVerifier;
-
-impl PlonkVerifier {
-    pub fn new() -> Self {
-        Self
+pub fn verify_plonk_algebraic(
+    vk: &PlonkVerifyingKey,
+    proof: &PlonkProof,
+    public_inputs: &[U256],
+) -> Result<(), ()> {
+    if proof.bsb22_commitments.len() != vk.qcp.len() {
+        return Err(());
+    }
+    if public_inputs.len() != vk.nb_public_variables {
+        return Err(());
     }
 
-    /// Main verification entry point for Plonk proofs
-    pub fn verify_proof_with_key(
-        &self,
-        vk: &PlonkVerificationKey,
-        proof: &PlonkProof,
-        public_inputs: &[U256],
-    ) -> bool {
-        // Validate inputs
-        if public_inputs.len() != vk.num_public_inputs as usize {
-            return false;
-        }
+    // Initialize transcript
+    let mut tr = fs::Transcript::new(&[GAMMA, BETA, ALPHA, ZETA, U]);
 
-        if public_inputs.iter().any(|&x| x >= R) {
-            return false;
-        }
+    // Bind public data for gamma
+    bind_public_data(&mut tr, vk, public_inputs)?;
 
-        // Compute Fiat-Shamir challenges
-        let challenges = match self.compute_challenges(proof, public_inputs) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
+    // Generate gamma challenge
+    bind_points(&mut tr, GAMMA, &[proof.lro[0], proof.lro[1], proof.lro[2]])?;
+    let gamma = fs::to_fr_mod_r(tr.compute(GAMMA)?);
 
-        // Compute quotient evaluation
-        let quotient_eval = match self.compute_quotient_evaluation(proof, &challenges, vk, public_inputs) {
-            Ok(eval) => eval,
-            Err(_) => return false,
-        };
+    // Generate beta challenge
+    let beta = fs::to_fr_mod_r(tr.compute(BETA)?);
 
-        // Verify quotient evaluation matches proof
-        if quotient_eval != proof.quotient_evaluation {
-            return false;
-        }
+    // Generate alpha challenge
+    let mut alpha_deps = Vec::with_capacity(proof.bsb22_commitments.len() + 1);
+    alpha_deps.extend_from_slice(&proof.bsb22_commitments);
+    alpha_deps.push(proof.z);
+    bind_points(&mut tr, ALPHA, &alpha_deps)?;
+    let alpha = fs::to_fr_mod_r(tr.compute(ALPHA)?);
 
-        // Verify opening proofs
-        if !self.verify_opening_proofs(proof, &challenges, vk) {
-            return false;
-        }
+    // Generate zeta challenge
+    bind_points(&mut tr, ZETA, &proof.h)?;
+    let zeta = fs::to_fr_mod_r(tr.compute(ZETA)?);
 
-        // Batch verify commitments
-        self.batch_verify_commitments(proof, &challenges, vk)
+    // Compute zh(zeta) = zeta^n - 1
+    let n_u = U256::from(vk.size as u64);
+    let zeta_power_n = math::pow_mod(zeta, n_u, config::R_MOD);
+    let one = U256::from(1);
+    let zh_zeta = math::mod_sub(zeta_power_n, one, config::R_MOD);
+
+    // Compute L1(zeta)
+    let zeta_minus_one = math::mod_sub(zeta, one, config::R_MOD);
+    let inv_zm1 = math::mod_inv(zeta_minus_one, config::R_MOD).ok_or(())?;
+    let mut lagrange_one = math::mod_mul(zh_zeta, inv_zm1, config::R_MOD);
+    lagrange_one = math::mod_mul(lagrange_one, vk.size_inv, config::R_MOD);
+
+    // Compute ∑ L_i(zeta)*w_i (public input contribution)
+    let mut pi = U256::ZERO;
+    let mut accw = U256::from(1);
+    let mut dens = Vec::with_capacity(public_inputs.len());
+    for _ in 0..public_inputs.len() {
+        let tmp = math::mod_sub(zeta, accw, config::R_MOD);
+        dens.push(tmp);
+        accw = math::mod_mul(accw, vk.generator, config::R_MOD);
+    }
+    let inv_dens = math::batch_invert(&mut dens.clone()).ok_or(())?;
+    accw = U256::from(1);
+    for (i, w) in public_inputs.iter().enumerate() {
+        let mut li = zh_zeta;
+        li = math::mod_mul(li, inv_dens[i], config::R_MOD);
+        li = math::mod_mul(li, vk.size_inv, config::R_MOD);
+        li = math::mod_mul(li, accw, config::R_MOD);
+        li = math::mod_mul(li, *w, config::R_MOD);
+        accw = math::mod_mul(accw, vk.generator, config::R_MOD);
+        pi = math::mod_add(pi, li, config::R_MOD);
     }
 
-    /// Compute Fiat-Shamir challenges from proof and public inputs
-    pub fn compute_challenges(
-        &self,
-        proof: &PlonkProof,
-        public_inputs: &[U256],
-    ) -> Result<PlonkChallenges, ()> {
-        // In a real implementation, this would use a proper transcript
-        // For now, we'll use a simplified approach based on proof elements
-        
-        // Derive beta and gamma from wire commitments
-        let beta = self.hash_to_field(&[
-            proof.wire_commitments[0].x,
-            proof.wire_commitments[0].y,
-            proof.wire_commitments[1].x,
-            proof.wire_commitments[1].y,
-        ])?;
+    // Process BSB22 commitments (hash_to_field contributions)
+    for (idx, bsb) in proof.bsb22_commitments.iter().enumerate() {
+        let hashed = hash_to_field::hash_g1_to_fr(bsb);
 
-        let gamma = self.hash_to_field(&[
-            beta,
-            proof.wire_commitments[2].x,
-            proof.wire_commitments[2].y,
-        ])?;
+        let exp = U256::from((vk.nb_public_variables + vk.commitment_constraint_indexes[idx]) as u64);
+        let w_pow_i = math::pow_mod(vk.generator, exp, config::R_MOD);
+        let den = math::mod_sub(zeta, w_pow_i, config::R_MOD);
+        let inv = math::mod_inv(den, config::R_MOD).ok_or(())?;
 
-        // Derive alpha from permutation commitment
-        let alpha = self.hash_to_field(&[
-            gamma,
-            proof.permutation_commitment.x,
-            proof.permutation_commitment.y,
-        ])?;
+        let mut lagrange = zh_zeta;
+        lagrange = math::mod_mul(lagrange, w_pow_i, config::R_MOD);
+        lagrange = math::mod_mul(lagrange, inv, config::R_MOD);
+        lagrange = math::mod_mul(lagrange, vk.size_inv, config::R_MOD);
 
-        // Derive zeta from quotient commitments
-        let zeta = self.hash_to_field(&[
-            alpha,
-            proof.quotient_commitments[0].x,
-            proof.quotient_commitments[0].y,
-            proof.quotient_commitments[1].x,
-            proof.quotient_commitments[1].y,
-            proof.quotient_commitments[2].x,
-            proof.quotient_commitments[2].y,
-        ])?;
-
-        // Derive v from evaluations
-        let v = self.hash_to_field(&[
-            zeta,
-            proof.wire_evaluations[0],
-            proof.wire_evaluations[1],
-            proof.wire_evaluations[2],
-            proof.permutation_evaluations[0],
-            proof.permutation_evaluations[1],
-            proof.permutation_evaluations[2],
-            proof.quotient_evaluation,
-        ])?;
-
-        Ok(PlonkChallenges {
-            beta,
-            gamma,
-            alpha,
-            zeta,
-            v,
-        })
+        let contrib = math::mod_mul(lagrange, hashed, config::R_MOD);
+        pi = math::mod_add(pi, contrib, config::R_MOD);
     }
 
-    /// Compute the quotient polynomial evaluation
-    pub fn compute_quotient_evaluation(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-        public_inputs: &[U256],
-    ) -> Result<U256, ()> {
-        // Compute public input contribution
-        let pi_eval = self.compute_public_input_evaluation(public_inputs, challenges.zeta, vk)?;
+    // Extract claimed values from proof
+    let l = proof.batched_proof.claimed_values[0];
+    let r = proof.batched_proof.claimed_values[1];
+    let o = proof.batched_proof.claimed_values[2];
+    let s1 = proof.batched_proof.claimed_values[3];
+    let s2 = proof.batched_proof.claimed_values[4];
+    let zu = proof.z_shifted_opening.claimed_value;
 
-        // Compute gate constraints
-        let gate_eval = self.compute_gate_evaluation(proof, challenges)?;
+    // Compute alpha^2 * L1(zeta)
+    let mut alpha2_l1 = math::mod_mul(alpha, alpha, config::R_MOD);
+    alpha2_l1 = math::mod_mul(alpha2_l1, lagrange_one, config::R_MOD);
 
-        // Compute permutation constraint
-        let perm_eval = self.compute_permutation_evaluation(proof, challenges, vk)?;
+    // Compute constant linearization term
+    let mut t1 = math::mod_add(math::mod_mul(beta, s1, config::R_MOD), l, config::R_MOD);
+    t1 = math::mod_add(t1, gamma, config::R_MOD);
 
-        // Combine all constraints with alpha powers
-        let mut quotient = gate_eval;
-        quotient = quotient.wrapping_add(challenges.alpha.wrapping_mul(perm_eval));
-        quotient = quotient.wrapping_add(challenges.alpha.wrapping_mul(challenges.alpha).wrapping_mul(pi_eval));
+    let mut t2 = math::mod_add(math::mod_mul(beta, s2, config::R_MOD), r, config::R_MOD);
+    t2 = math::mod_add(t2, gamma, config::R_MOD);
 
-        // Divide by vanishing polynomial Z_H(zeta) = zeta^n - 1
-        let zeta_n = self.pow_mod(challenges.zeta, vk.domain_size as u64)?;
-        let vanishing = zeta_n.wrapping_sub(U256::from(1u64));
-        
-        if vanishing.is_zero() {
-            return Err(());
-        }
+    let t3 = math::mod_add(o, gamma, config::R_MOD);
 
-        let vanishing_inv = self.mod_inverse(vanishing)?;
-        Ok(quotient.wrapping_mul(vanishing_inv) % R)
+    let mut const_lin = math::mod_mul(t1, t2, config::R_MOD);
+    const_lin = math::mod_mul(const_lin, t3, config::R_MOD);
+    const_lin = math::mod_mul(const_lin, alpha, config::R_MOD);
+    const_lin = math::mod_mul(const_lin, zu, config::R_MOD);
+
+    const_lin = math::mod_sub(const_lin, alpha2_l1, config::R_MOD);
+    const_lin = math::mod_add(const_lin, pi, config::R_MOD);
+    const_lin = math::mod_sub(U256::ZERO, const_lin, config::R_MOD);
+
+    // Compute s1 coefficient: alpha * (l+β*s1+γ)*(r+β*s2+γ)*β * z(ωζ)
+    let mut s1_coeff = math::mod_add(math::mod_mul(beta, s1, config::R_MOD), l, config::R_MOD);
+    s1_coeff = math::mod_add(s1_coeff, gamma, config::R_MOD);
+    let tmp2 = math::mod_add(math::mod_mul(beta, s2, config::R_MOD), r, config::R_MOD);
+    let tmp2 = math::mod_add(tmp2, gamma, config::R_MOD);
+    s1_coeff = math::mod_mul(s1_coeff, tmp2, config::R_MOD);
+    s1_coeff = math::mod_mul(s1_coeff, beta, config::R_MOD);
+    s1_coeff = math::mod_mul(s1_coeff, alpha, config::R_MOD);
+    s1_coeff = math::mod_mul(s1_coeff, zu, config::R_MOD);
+
+    // Compute z coefficient
+    let mut s2_coeff = math::mod_add(math::mod_mul(beta, zeta, config::R_MOD), gamma, config::R_MOD);
+    s2_coeff = math::mod_add(s2_coeff, l, config::R_MOD);
+
+    let mut tmp = math::mod_mul(vk.coset_shift, zeta, config::R_MOD);
+    tmp = math::mod_mul(beta, tmp, config::R_MOD);
+    tmp = math::mod_add(tmp, gamma, config::R_MOD);
+    tmp = math::mod_add(tmp, r, config::R_MOD);
+    s2_coeff = math::mod_mul(s2_coeff, tmp, config::R_MOD);
+
+    let mut tmp2 = math::mod_mul(vk.coset_shift, vk.coset_shift, config::R_MOD);
+    tmp2 = math::mod_mul(tmp2, zeta, config::R_MOD);
+    tmp2 = math::mod_mul(beta, tmp2, config::R_MOD);
+    tmp2 = math::mod_add(tmp2, gamma, config::R_MOD);
+    tmp2 = math::mod_add(tmp2, o, config::R_MOD);
+
+    s2_coeff = math::mod_mul(s2_coeff, tmp2, config::R_MOD);
+    s2_coeff = math::mod_mul(s2_coeff, alpha, config::R_MOD);
+    s2_coeff = math::mod_sub(U256::ZERO, s2_coeff, config::R_MOD);
+
+    let coeff_z = math::mod_add(alpha2_l1, s2_coeff, config::R_MOD);
+
+    // Compute powers of zeta for quotient polynomial evaluation
+    let n_plus_two = U256::from(vk.size as u64 + 2);
+    let zeta_n2 = math::pow_mod(zeta, n_plus_two, config::R_MOD);
+    let zeta_2n2 = math::mod_mul(zeta_n2, zeta_n2, config::R_MOD);
+
+    // Compute zh coefficients: -(ζ^n-1), -ζ^{n+2}(ζ^n-1), -ζ^{2(n+2)}(ζ^n-1)
+    let zh = math::mod_sub(U256::ZERO, zh_zeta, config::R_MOD);
+    let zh_z_n2 = math::mod_sub(U256::ZERO, math::mod_mul(zeta_n2, zh_zeta, config::R_MOD), config::R_MOD);
+    let zh_z_2n2 = math::mod_sub(U256::ZERO, math::mod_mul(zeta_2n2, zh_zeta, config::R_MOD), config::R_MOD);
+
+    // Compute l*r for gate constraint
+    let rl = math::mod_mul(l, r, config::R_MOD);
+
+    // Compose linearized polynomial via MSM
+    let mut points: Vec<G1Point> = Vec::new();
+    let mut scalars: Vec<U256> = Vec::new();
+
+    // BSB22 commitments
+    for c in &proof.bsb22_commitments {
+        points.push(*c);
+    }
+    for i in 0..proof.bsb22_commitments.len() {
+        scalars.push(proof.batched_proof.claimed_values[5 + i]);
     }
 
-    /// Verify KZG opening proofs using pairing checks
-    fn verify_opening_proofs(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> bool {
-        // Batch verify multiple opening proofs for efficiency
-        self.batch_verify_openings(proof, challenges, vk)
-    }
+    // Gate selectors: ql, qr, qm, qo, qk
+    points.push(vk.ql); scalars.push(l);
+    points.push(vk.qr); scalars.push(r);
+    points.push(vk.qm); scalars.push(rl);
+    points.push(vk.qo); scalars.push(o);
+    points.push(vk.qk); scalars.push(U256::from(1));
 
-    /// Batch verify multiple KZG opening proofs
-    fn batch_verify_openings(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> bool {
-        // Compute linearization polynomial commitment
-        let linearization = match self.compute_linearization_commitment(proof, challenges, vk) {
-            Ok(lin) => lin,
-            Err(_) => return false,
-        };
+    // Permutation: s3 * s1_coeff
+    points.push(vk.s[2]); scalars.push(s1_coeff);
 
-        // Batch the opening proofs with random linear combination
-        let random = challenges.v;
-        
-        // Combine commitments: [F] + v * [Z_omega]
-        let combined_commitment = match self.ec_add(&linearization, &self.ec_mul(&proof.opening_proof_at_omega, random).unwrap()) {
-            Ok(comm) => comm,
-            Err(_) => return false,
-        };
+    // Permutation accumulator: z * coeff_z
+    points.push(proof.z); scalars.push(coeff_z);
 
-        // Combine evaluations: f(zeta) + v * z(zeta * omega)
-        let combined_eval = proof.quotient_evaluation.wrapping_add(
-            random.wrapping_mul(proof.permutation_evaluations[0])
-        ) % R;
+    // Quotient polynomial: h0, h1, h2 with zh coefficients
+    points.push(proof.h[0]); scalars.push(zh);
+    points.push(proof.h[1]); scalars.push(zh_z_n2);
+    points.push(proof.h[2]); scalars.push(zh_z_2n2);
 
-        // Combine points: zeta + v * (zeta * omega)
-        let zeta_omega = challenges.zeta.wrapping_mul(vk.omega) % R;
-        let combined_point = challenges.zeta.wrapping_add(random.wrapping_mul(zeta_omega)) % R;
+    // Compute linearized digest
+    let linearized_digest = ec::msm(&points, &scalars)?;
 
-        // Verify the batched opening
-        self.verify_kzg_opening(&combined_commitment, combined_point, combined_eval, &vk.kzg_g2)
-    }
+    // Prepare digests for batched opening
+    let mut digests_to_fold = Vec::with_capacity(6 + vk.qcp.len());
+    digests_to_fold.push(linearized_digest);
+    digests_to_fold.push(proof.lro[0]);
+    digests_to_fold.push(proof.lro[1]);
+    digests_to_fold.push(proof.lro[2]);
+    digests_to_fold.push(vk.s[0]);
+    digests_to_fold.push(vk.s[1]);
+    digests_to_fold.extend_from_slice(&vk.qcp);
 
-    /// Compute the linearization polynomial commitment
-    fn compute_linearization_commitment(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> Result<G1Point, ()> {
-        // Start with quotient polynomial commitment
-        let mut result = self.fold_quotient_commitments(&proof.quotient_commitments, challenges.zeta, vk.domain_size)?;
+    // Prepend const_lin to claimed values
+    let mut claimed_values = Vec::with_capacity(1 + proof.batched_proof.claimed_values.len());
+    claimed_values.push(const_lin);
+    claimed_values.extend_from_slice(&proof.batched_proof.claimed_values);
 
-        // Add selector polynomial contributions
-        let gate_contrib = self.compute_gate_contribution(proof, challenges, vk)?;
-        result = self.ec_add(&result, &gate_contrib)?;
+    let batched = BatchOpeningProof {
+        h: proof.batched_proof.h,
+        claimed_values,
+    };
 
-        // Add permutation polynomial contributions  
-        let perm_contrib = self.compute_permutation_contribution(proof, challenges, vk)?;
-        result = self.ec_add(&result, &perm_contrib)?;
+    // Fold the proof
+    let (folded_proof, folded_digest) = kzg::fold_proof(
+        &digests_to_fold, 
+        &batched, 
+        &zeta, 
+        Some(zu), 
+        &mut tr
+    )?;
 
-        Ok(result)
-    }
+    // Generate final challenge u
+    tr.bind(U, &utils::g1_to_bytes(&folded_digest))?;
+    tr.bind(U, &utils::g1_to_bytes(&proof.z))?;
+    tr.bind(U, &utils::g1_to_bytes(&folded_proof.h))?;
+    tr.bind(U, &utils::g1_to_bytes(&proof.z_shifted_opening.h))?;
+    let u = fs::to_fr_mod_r(tr.compute(U)?);
 
-    /// Fold quotient polynomial commitments H_0 + zeta^{n+2} * H_1 + zeta^{2(n+2)} * H_2
-    fn fold_quotient_commitments(&self, commitments: &[G1Point; 3], zeta: U256, domain_size: u32) -> Result<G1Point, ()> {
-        let zeta_n_plus_2 = self.pow_mod(zeta, domain_size as u64 + 2)?;
-        let zeta_2n_plus_4 = self.pow_mod(zeta_n_plus_2, 2)?;
+    let shifted_zeta = math::mod_mul(zeta, vk.generator, config::R_MOD);
 
-        // H_0 + zeta^{n+2} * H_1 + zeta^{2(n+2)} * H_2
-        let h1_scaled = self.ec_mul(&commitments[1], zeta_n_plus_2)?;
-        let h2_scaled = self.ec_mul(&commitments[2], zeta_2n_plus_4)?;
-        
-        let temp = self.ec_add(&commitments[0], &h1_scaled)?;
-        self.ec_add(&temp, &h2_scaled)
-    }
-
-    /// Compute gate constraint contributions to linearization
-    fn compute_gate_contribution(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> Result<G1Point, ()> {
-        let l_eval = proof.wire_evaluations[0];
-        let r_eval = proof.wire_evaluations[1];
-        let o_eval = proof.wire_evaluations[2];
-
-        // Compute selector contributions: l(zeta)*[Q_L] + r(zeta)*[Q_R] + l(zeta)*r(zeta)*[Q_M] + o(zeta)*[Q_O] + [Q_K]
-        let ql_contrib = self.ec_mul(&vk.selector_commitments[0], l_eval)?;
-        let qr_contrib = self.ec_mul(&vk.selector_commitments[1], r_eval)?;
-        let qm_contrib = self.ec_mul(&vk.selector_commitments[2], l_eval.wrapping_mul(r_eval) % R)?;
-        let qo_contrib = self.ec_mul(&vk.selector_commitments[3], o_eval)?;
-        let qk_contrib = vk.selector_commitments[4];
-
-        // Sum all contributions
-        let temp1 = self.ec_add(&ql_contrib, &qr_contrib)?;
-        let temp2 = self.ec_add(&temp1, &qm_contrib)?;
-        let temp3 = self.ec_add(&temp2, &qo_contrib)?;
-        self.ec_add(&temp3, &qk_contrib)
-    }
-
-    /// Compute permutation constraint contributions to linearization
-    fn compute_permutation_contribution(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> Result<G1Point, ()> {
-        // Simplified permutation contribution
-        // In full implementation, this would compute the complete permutation argument
-        let z_omega = proof.permutation_evaluations[0];
-        let alpha_z_omega = challenges.alpha.wrapping_mul(z_omega) % R;
-        
-        self.ec_mul(&vk.permutation_commitments[0], alpha_z_omega)
-    }
-
-    /// Batch verify polynomial commitments using pairing
-    fn batch_verify_commitments(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> bool {
-        // This implements the final pairing check for Plonk verification
-        // e([F] - [y]G_1, G_2) = e([W], [x]G_2 - G_2)
-        
-        // Compute [F] - [y]G_1 where y is the claimed evaluation
-        let y_g1 = match self.ec_mul(&self.get_g1_generator(), proof.quotient_evaluation) {
-            Ok(point) => point,
-            Err(_) => return false,
-        };
-        
-        let f_minus_y = match self.ec_sub(&proof.opening_proof, &y_g1) {
-            Ok(point) => point,
-            Err(_) => return false,
-        };
-
-        // Compute [x]G_2 - G_2 where x is the evaluation point
-        let x_g2 = match self.ec_mul_g2(&vk.kzg_g2, challenges.zeta) {
-            Ok(point) => point,
-            Err(_) => return false,
-        };
-        
-        let x_g2_minus_g2 = match self.ec_sub_g2(&x_g2, &vk.kzg_g2) {
-            Ok(point) => point,
-            Err(_) => return false,
-        };
-
-        // Perform pairing check
-        self.pairing_check(&f_minus_y, &vk.kzg_g2, &proof.opening_proof, &x_g2_minus_g2)
-    }
-
-    // Helper methods
-
-    /// Hash field elements to a field element
-    fn hash_to_field(&self, elements: &[U256]) -> Result<U256, ()> {
-        // Simplified hash function - in practice would use proper transcript
-        let mut result = U256::ZERO;
-        for (i, &elem) in elements.iter().enumerate() {
-            result = result.wrapping_add(elem.wrapping_mul(U256::from(i + 1)));
-        }
-        Ok(result % R)
-    }
-
-    /// Compute public input polynomial evaluation
-    fn compute_public_input_evaluation(
-        &self,
-        public_inputs: &[U256],
-        zeta: U256,
-        vk: &PlonkVerificationKey,
-    ) -> Result<U256, ()> {
-        let mut result = U256::ZERO;
-        let mut omega_power = U256::from(1u64);
-
-        for &input in public_inputs {
-            // Compute Lagrange basis polynomial L_i(zeta)
-            let lagrange = self.compute_lagrange_basis(zeta, omega_power, vk.domain_size, vk.omega)?;
-            result = result.wrapping_add(input.wrapping_mul(lagrange));
-            omega_power = omega_power.wrapping_mul(vk.omega) % R;
-        }
-
-        Ok(result % R)
-    }
-
-    /// Compute gate constraint evaluation
-    fn compute_gate_evaluation(&self, proof: &PlonkProof, challenges: &PlonkChallenges) -> Result<U256, ()> {
-        // Simplified gate evaluation - would implement full gate constraints
-        let l = proof.wire_evaluations[0];
-        let r = proof.wire_evaluations[1];
-        let o = proof.wire_evaluations[2];
-
-        // Basic arithmetic gate: L * R - O = 0
-        Ok(l.wrapping_mul(r).wrapping_sub(o) % R)
-    }
-
-    /// Compute permutation constraint evaluation
-    fn compute_permutation_evaluation(
-        &self,
-        proof: &PlonkProof,
-        challenges: &PlonkChallenges,
-        vk: &PlonkVerificationKey,
-    ) -> Result<U256, ()> {
-        // Simplified permutation evaluation
-        let z_omega = proof.permutation_evaluations[0];
-        let s1_zeta = proof.permutation_evaluations[1];
-        let s2_zeta = proof.permutation_evaluations[2];
-
-        // Basic permutation check
-        let numerator = z_omega.wrapping_mul(challenges.beta).wrapping_add(challenges.gamma);
-        let denominator = s1_zeta.wrapping_mul(challenges.beta).wrapping_add(challenges.gamma);
-        
-        if denominator.is_zero() {
-            return Err(());
-        }
-
-        let denom_inv = self.mod_inverse(denominator)?;
-        Ok(numerator.wrapping_mul(denom_inv) % R)
-    }
-
-    /// Compute Lagrange basis polynomial L_i(x) = ω^i * (x^n - 1) / (n * (x - ω^i))
-    fn compute_lagrange_basis(&self, x: U256, omega_i: U256, domain_size: u32, omega: U256) -> Result<U256, ()> {
-        let x_n = self.pow_mod(x, domain_size as u64)?;
-        let numerator = omega_i.wrapping_mul(x_n.wrapping_sub(U256::from(1u64)));
-        let denominator = U256::from(domain_size as u64).wrapping_mul(x.wrapping_sub(omega_i));
-        
-        if denominator.is_zero() {
-            return Err(());
-        }
-
-        let denom_inv = self.mod_inverse(denominator)?;
-        Ok(numerator.wrapping_mul(denom_inv) % R)
-    }
-
-    /// Verify a KZG opening proof
-    fn verify_kzg_opening(&self, proof: &G1Point, point: U256, evaluation: U256, g2: &G2Point) -> bool {
-        // Simplified KZG verification - would implement full pairing check
-        !proof.x.is_zero() || !proof.y.is_zero()
-    }
-
-    /// Compute modular exponentiation: base^exp mod R
-    fn pow_mod(&self, base: U256, exp: u64) -> Result<U256, ()> {
-        if exp == 0 {
-            return Ok(U256::from(1u64));
-        }
-
-        let mut result = U256::from(1u64);
-        let mut base = base % R;
-        let mut exp = exp;
-
-        while exp > 0 {
-            if exp & 1 == 1 {
-                result = result.wrapping_mul(base) % R;
-            }
-            base = base.wrapping_mul(base) % R;
-            exp >>= 1;
-        }
-
-        Ok(result)
-    }
-
-    /// Compute modular inverse using extended Euclidean algorithm
-    fn mod_inverse(&self, a: U256) -> Result<U256, ()> {
-        if a.is_zero() {
-            return Err(());
-        }
-
-        // Use Fermat's little theorem: a^(p-2) ≡ a^(-1) (mod p) for prime p
-        self.pow_mod(a, R.wrapping_sub(U256::from(2u64)).as_limbs()[0])
-    }
-
-    // Elliptic curve operations
-
-    /// Add two G1 points using EVM precompile
-    fn ec_add(&self, p1: &G1Point, p2: &G1Point) -> Result<G1Point, ()> {
-        let calldata: Vec<u8> = [
-            p1.x.to_be_bytes::<32>(),
-            p1.y.to_be_bytes::<32>(),
-            p2.x.to_be_bytes::<32>(),
-            p2.y.to_be_bytes::<32>(),
-        ].concat();
-
-        unsafe {
-            RawCall::new_static()
-                .gas(u64::MAX)
-                .call(Address::from(EC_ADD_BYTES), &calldata)
-        }
-        .map(|ret| G1Point {
-            x: U256::from_be_slice(&ret[0..32]),
-            y: U256::from_be_slice(&ret[32..64]),
-        })
-        .map_err(|_| ())
-    }
-
-    /// Subtract two G1 points: p1 - p2 = p1 + (-p2)
-    fn ec_sub(&self, p1: &G1Point, p2: &G1Point) -> Result<G1Point, ()> {
-        let neg_p2 = self.negate_g1(p2);
-        self.ec_add(p1, &neg_p2)
-    }
-
-    /// Multiply G1 point by scalar using EVM precompile
-    fn ec_mul(&self, point: &G1Point, scalar: U256) -> Result<G1Point, ()> {
-        let calldata: Vec<u8> = [
-            point.x.to_be_bytes::<32>(),
-            point.y.to_be_bytes::<32>(),
-            scalar.to_be_bytes::<32>(),
-        ].concat();
-
-        unsafe {
-            RawCall::new_static()
-                .gas(u64::MAX)
-                .call(Address::from(EC_MUL_BYTES), &calldata)
-        }
-        .map(|ret| G1Point {
-            x: U256::from_be_slice(&ret[0..32]),
-            y: U256::from_be_slice(&ret[32..64]),
-        })
-        .map_err(|_| ())
-    }
-
-    /// Negate a G1 point
-    fn negate_g1(&self, p: &G1Point) -> G1Point {
-        if p.x.is_zero() && p.y.is_zero() {
-            *p
-        } else {
-            G1Point {
-                x: p.x,
-                y: Q.wrapping_sub(p.y),
-            }
-        }
-    }
-
-    /// Get the G1 generator point
-    fn get_g1_generator(&self) -> G1Point {
-        G1Point {
-            x: U256::from(1u64),
-            y: U256::from(2u64),
-        }
-    }
-
-    /// Multiply G2 point by scalar (simplified implementation)
-    fn ec_mul_g2(&self, point: &G2Point, scalar: U256) -> Result<G2Point, ()> {
-        // Simplified G2 scalar multiplication
-        // In practice, this would use proper G2 arithmetic
-        if scalar.is_zero() {
-            return Ok(G2Point {
-                x: [U256::ZERO, U256::ZERO],
-                y: [U256::ZERO, U256::ZERO],
-            });
-        }
-        Ok(*point)
-    }
-
-    /// Subtract two G2 points (simplified implementation)
-    fn ec_sub_g2(&self, p1: &G2Point, p2: &G2Point) -> Result<G2Point, ()> {
-        // Simplified G2 subtraction
-        // In practice, this would use proper G2 arithmetic
-        Ok(*p1)
-    }
-
-    /// Perform pairing check using EVM precompile
-    fn pairing_check(&self, g1_1: &G1Point, g2_1: &G2Point, g1_2: &G1Point, g2_2: &G2Point) -> bool {
-        let calldata: Vec<u8> = [
-            g1_1.x.to_be_bytes::<32>(),
-            g1_1.y.to_be_bytes::<32>(),
-            g2_1.x[0].to_be_bytes::<32>(),
-            g2_1.x[1].to_be_bytes::<32>(),
-            g2_1.y[0].to_be_bytes::<32>(),
-            g2_1.y[1].to_be_bytes::<32>(),
-            g1_2.x.to_be_bytes::<32>(),
-            g1_2.y.to_be_bytes::<32>(),
-            g2_2.x[0].to_be_bytes::<32>(),
-            g2_2.x[1].to_be_bytes::<32>(),
-            g2_2.y[0].to_be_bytes::<32>(),
-            g2_2.y[1].to_be_bytes::<32>(),
-        ].concat();
-
-        unsafe {
-            RawCall::new_static()
-                .gas(u64::MAX)
-                .call(Address::from(EC_PAIRING_BYTES), &calldata)
-        }
-        .map(|ret| !U256::from_be_slice(&ret[0..32]).is_zero())
-        .unwrap_or(false)
-    }
+    // Final batched pairing verification
+    kzg::batch_verify_multi_points(
+        vec![folded_digest, proof.z],
+        vec![folded_proof, proof.z_shifted_opening.clone()],
+        vec![zeta, shifted_zeta],
+        u,
+        vk,
+    )
 }
 
-impl Default for PlonkVerifier {
-    fn default() -> Self {
-        Self::new()
+fn bind_public_data(
+    tr: &mut fs::Transcript, 
+    vk: &PlonkVerifyingKey, 
+    public_inputs: &[U256]
+) -> Result<(), ()> {
+    // Bind verification key elements
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.s[0]))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.s[1]))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.s[2]))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.ql))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.qr))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.qm))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.qo))?;
+    tr.bind(GAMMA, &utils::g1_to_bytes(&vk.qk))?;
+    
+    // Bind custom gates
+    for q in &vk.qcp {
+        tr.bind(GAMMA, &utils::g1_to_bytes(q))?;
     }
+    
+    // Bind public inputs
+    for w in public_inputs {
+        tr.bind(GAMMA, &w.to_be_bytes::<32>())?;
+    }
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
+fn bind_points(tr: &mut fs::Transcript, id: &'static str, pts: &[G1Point]) -> Result<(), ()> {
+    for p in pts {
+        tr.bind(id, &utils::g1_to_bytes(p))?;
+    }
+    Ok(())
+}
+
+/////////////////////////////////////////////////////////////////
+// KZG polynomial commitment utilities
+/////////////////////////////////////////////////////////////////
+
+mod kzg {
     use super::*;
 
-    #[test]
-    fn test_plonk_verifier_creation() {
-        let verifier = PlonkVerifier::new();
-        let default_verifier = PlonkVerifier::default();
-        
-        // Both should be equivalent
-        assert_eq!(std::mem::size_of_val(&verifier), std::mem::size_of_val(&default_verifier));
-    }
+    pub fn fold_proof(
+        digests: &[G1Point],
+        batch_opening_proof: &BatchOpeningProof,
+        point: &U256,
+        data_transcript: Option<U256>,
+        tr: &mut fs::Transcript,
+    ) -> Result<(OpeningProof, G1Point), ()> {
+        // Derive gamma for folding
+        let gamma = derive_gamma(point, digests, &batch_opening_proof.claimed_values, data_transcript)?;
 
-    #[test]
-    fn test_hash_to_field() {
-        let verifier = PlonkVerifier::new();
-        let elements = [U256::from(1u64), U256::from(2u64), U256::from(3u64)];
-        
-        let result = verifier.hash_to_field(&elements);
-        assert!(result.is_ok());
-        
-        let hash = result.unwrap();
-        assert!(hash < R);
-    }
+        // Bind gamma into main transcript for challenge U
+        tr.bind(U, &gamma.to_be_bytes::<32>())?;
 
-    #[test]
-    fn test_pow_mod() {
-        let verifier = PlonkVerifier::new();
-        
-        // Test 2^3 mod R = 8
-        let result = verifier.pow_mod(U256::from(2u64), 3);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), U256::from(8u64));
-        
-        // Test 0^0 = 1
-        let result = verifier.pow_mod(U256::from(0u64), 0);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), U256::from(1u64));
-    }
+        // Compute gamma powers
+        let mut gammas = vec![U256::from(1); digests.len()];
+        if digests.len() > 1 {
+            gammas[1] = gamma;
+        }
+        for i in 2..digests.len() {
+            gammas[i] = math::mod_mul(gammas[i-1], gamma, config::R_MOD);
+        }
 
-    #[test]
-    fn test_mod_inverse() {
-        let verifier = PlonkVerifier::new();
-        
-        // Test inverse of 2
-        let result = verifier.mod_inverse(U256::from(2u64));
-        assert!(result.is_ok());
-        
-        let inv = result.unwrap();
-        let product = (U256::from(2u64).wrapping_mul(inv)) % R;
-        assert_eq!(product, U256::from(1u64));
-    }
+        // Fold digests and evaluations
+        let (folded_digest, folded_eval) = fold(digests, &batch_opening_proof.claimed_values, &gammas)?;
 
-    #[test]
-    fn test_mod_inverse_zero() {
-        let verifier = PlonkVerifier::new();
-        
-        // Test that inverse of 0 fails
-        let result = verifier.mod_inverse(U256::ZERO);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_compute_challenges_structure() {
-        let verifier = PlonkVerifier::new();
-        
-        // Create a dummy proof
-        let proof = PlonkProof {
-            wire_commitments: [
-                G1Point { x: U256::from(1u64), y: U256::from(2u64) },
-                G1Point { x: U256::from(3u64), y: U256::from(4u64) },
-                G1Point { x: U256::from(5u64), y: U256::from(6u64) },
-            ],
-            permutation_commitment: G1Point { x: U256::from(7u64), y: U256::from(8u64) },
-            quotient_commitments: [
-                G1Point { x: U256::from(9u64), y: U256::from(10u64) },
-                G1Point { x: U256::from(11u64), y: U256::from(12u64) },
-                G1Point { x: U256::from(13u64), y: U256::from(14u64) },
-            ],
-            wire_evaluations: [U256::from(15u64), U256::from(16u64), U256::from(17u64)],
-            permutation_evaluations: [U256::from(18u64), U256::from(19u64), U256::from(20u64)],
-            quotient_evaluation: U256::from(21u64),
-            opening_proof: G1Point { x: U256::from(22u64), y: U256::from(23u64) },
-            opening_proof_at_omega: G1Point { x: U256::from(24u64), y: U256::from(25u64) },
+        let open_proof = OpeningProof {
+            h: batch_opening_proof.h,
+            claimed_value: folded_eval,
         };
 
-        let public_inputs = [U256::from(100u64), U256::from(200u64)];
-        
-        let result = verifier.compute_challenges(&proof, &public_inputs);
-        assert!(result.is_ok());
-        
-        let challenges = result.unwrap();
-        assert!(challenges.beta < R);
-        assert!(challenges.gamma < R);
-        assert!(challenges.alpha < R);
-        assert!(challenges.zeta < R);
-        assert!(challenges.v < R);
+        Ok((open_proof, folded_digest))
     }
 
-    #[test]
-    fn test_negate_g1() {
-        let verifier = PlonkVerifier::new();
-        
-        // Test negation of a point
-        let point = G1Point { x: U256::from(1u64), y: U256::from(2u64) };
-        let neg_point = verifier.negate_g1(&point);
-        
-        assert_eq!(neg_point.x, point.x);
-        assert_eq!(neg_point.y, Q.wrapping_sub(point.y));
-        
-        // Test negation of zero point
-        let zero_point = G1Point { x: U256::ZERO, y: U256::ZERO };
-        let neg_zero = verifier.negate_g1(&zero_point);
-        assert_eq!(neg_zero.x, U256::ZERO);
-        assert_eq!(neg_zero.y, U256::ZERO);
+    pub fn batch_verify_multi_points(
+        digests: Vec<G1Point>,
+        proofs: Vec<OpeningProof>,
+        points: Vec<U256>,
+        u: U256,
+        vk: &PlonkVerifyingKey,
+    ) -> Result<(), ()> {
+        let n = digests.len();
+        if proofs.len() != n || points.len() != n { return Err(()); }
+        if n == 1 { return Err(()); }
+
+        // Generate random coefficients: [1, u, u^2, ...]
+        let mut rnd = vec![U256::from(1); n];
+        for i in 1..n {
+            rnd[i] = math::mod_mul(u, rnd[i-1], config::R_MOD);
+        }
+
+        // Fold quotient commitments
+        let q_points: Vec<G1Point> = proofs.iter().map(|p| p.h).collect();
+        let mut folded_quotients = ec::msm(&q_points, &rnd)?;
+
+        // Fold digests and evaluations
+        let evals: Vec<U256> = proofs.iter().map(|p| p.claimed_value).collect();
+        let (mut folded_digests, folded_evals) = fold(&digests, &evals, &rnd)?;
+
+        // Subtract [folded_evals]*g1
+        let folded_evals_commit = ec::ec_mul(&vk.g1, folded_evals)?;
+        let folded_evals_commit_neg = ec::g1_neg(&folded_evals_commit);
+        folded_digests = ec::ec_add(&folded_digests, &folded_evals_commit_neg)?;
+
+        // Add ∑ rnd[i]*points[i]*proofs[i].h
+        let mut rnd_points = rnd.clone();
+        for i in 0..n {
+            rnd_points[i] = math::mod_mul(rnd_points[i], points[i], config::R_MOD);
+        }
+        let folded_points_quot = ec::msm(&q_points, &rnd_points)?;
+        folded_digests = ec::ec_add(&folded_digests, &folded_points_quot)?;
+
+        folded_quotients = ec::g1_neg(&folded_quotients);
+
+        // Final pairing check
+        let ok = ec::pairing(&[
+            (folded_digests, vk.g2[0]),
+            (folded_quotients, vk.g2[1]),
+        ])?;
+        if !ok { return Err(()); }
+        Ok(())
     }
 
-    #[test]
-    fn test_g1_generator() {
-        let verifier = PlonkVerifier::new();
-        let generator = verifier.get_g1_generator();
-        
-        assert_eq!(generator.x, U256::from(1u64));
-        assert_eq!(generator.y, U256::from(2u64));
+    fn derive_gamma(
+        point: &U256,
+        digests: &[G1Point],
+        claimed_values: &[U256],
+        data_transcript: Option<U256>,
+    ) -> Result<U256, ()> {
+        let mut tr = fs::Transcript::new(&[GAMMA]);
+        tr.bind(GAMMA, &point.to_be_bytes::<32>())?;
+        for d in digests {
+            tr.bind(GAMMA, &utils::g1_to_bytes(d))?;
+        }
+        for v in claimed_values {
+            tr.bind(GAMMA, &v.to_be_bytes::<32>())?;
+        }
+        if let Some(dt) = data_transcript {
+            tr.bind(GAMMA, &dt.to_be_bytes::<32>())?;
+        }
+        let b = tr.compute(GAMMA)?;
+        Ok(fs::to_fr_mod_r(b))
     }
 
-    #[test]
-    fn test_compute_lagrange_basis() {
-        let verifier = PlonkVerifier::new();
-        
-        // Test Lagrange basis computation
-        let x = U256::from(5u64);
-        let omega_i = U256::from(3u64);
-        let domain_size = 4u32;
-        let omega = U256::from(7u64);
-        
-        let result = verifier.compute_lagrange_basis(x, omega_i, domain_size, omega);
-        assert!(result.is_ok());
-        
-        let lagrange = result.unwrap();
-        assert!(lagrange < R);
-    }
-
-    #[test]
-    fn test_compute_lagrange_basis_zero_denominator() {
-        let verifier = PlonkVerifier::new();
-        
-        // Test case where x = omega_i, causing zero denominator
-        let x = U256::from(3u64);
-        let omega_i = U256::from(3u64);
-        let domain_size = 4u32;
-        let omega = U256::from(7u64);
-        
-        let result = verifier.compute_lagrange_basis(x, omega_i, domain_size, omega);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_compute_public_input_evaluation() {
-        let verifier = PlonkVerifier::new();
-        
-        let public_inputs = [U256::from(10u64), U256::from(20u64)];
-        let zeta = U256::from(5u64);
-        let vk = PlonkVerificationKey {
-            domain_size: 4,
-            num_public_inputs: 2,
-            selector_commitments: [G1Point { x: U256::ZERO, y: U256::ZERO }; 5],
-            permutation_commitments: [G1Point { x: U256::ZERO, y: U256::ZERO }; 3],
-            kzg_g2: G2Point { x: [U256::ZERO, U256::ZERO], y: [U256::ZERO, U256::ZERO] },
-            omega: U256::from(7u64),
-            coset_shift: U256::from(5u64),
-        };
-        
-        let result = verifier.compute_public_input_evaluation(&public_inputs, zeta, &vk);
-        assert!(result.is_ok());
-        
-        let evaluation = result.unwrap();
-        assert!(evaluation < R);
-    }
-
-    #[test]
-    fn test_compute_gate_evaluation() {
-        let verifier = PlonkVerifier::new();
-        
-        let proof = PlonkProof {
-            wire_commitments: [G1Point { x: U256::ZERO, y: U256::ZERO }; 3],
-            permutation_commitment: G1Point { x: U256::ZERO, y: U256::ZERO },
-            quotient_commitments: [G1Point { x: U256::ZERO, y: U256::ZERO }; 3],
-            wire_evaluations: [U256::from(2u64), U256::from(3u64), U256::from(6u64)], // 2 * 3 = 6
-            permutation_evaluations: [U256::ZERO; 3],
-            quotient_evaluation: U256::ZERO,
-            opening_proof: G1Point { x: U256::ZERO, y: U256::ZERO },
-            opening_proof_at_omega: G1Point { x: U256::ZERO, y: U256::ZERO },
-        };
-        
-        let challenges = PlonkChallenges {
-            beta: U256::from(1u64),
-            gamma: U256::from(2u64),
-            alpha: U256::from(3u64),
-            zeta: U256::from(4u64),
-            v: U256::from(5u64),
-        };
-        
-        let result = verifier.compute_gate_evaluation(&proof, &challenges);
-        assert!(result.is_ok());
-        
-        // For L=2, R=3, O=6: L*R - O = 2*3 - 6 = 0
-        let evaluation = result.unwrap();
-        assert_eq!(evaluation, U256::ZERO);
-    }
-
-    #[test]
-    fn test_fold_quotient_commitments() {
-        let verifier = PlonkVerifier::new();
-        
-        let commitments = [
-            G1Point { x: U256::from(1u64), y: U256::from(2u64) },
-            G1Point { x: U256::from(3u64), y: U256::from(4u64) },
-            G1Point { x: U256::from(5u64), y: U256::from(6u64) },
-        ];
-        let zeta = U256::from(2u64);
-        let domain_size = 4u32;
-        
-        let result = verifier.fold_quotient_commitments(&commitments, zeta, domain_size);
-        // This will likely fail due to EC operations, but we test the structure
-        // In a real test environment with proper EC precompiles, this would work
-        assert!(result.is_ok() || result.is_err()); // Either outcome is acceptable for this test
+    fn fold(di: &[G1Point], vals: &[U256], coeffs: &[U256]) -> Result<(G1Point, U256), ()> {
+        let folded_d = ec::msm(di, coeffs)?;
+        let mut folded_v = U256::ZERO;
+        for i in 0..vals.len() {
+            folded_v = math::mod_add(folded_v, math::mod_mul(vals[i], coeffs[i], config::R_MOD), config::R_MOD);
+        }
+        Ok((folded_d, folded_v))
     }
 }
